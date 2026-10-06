@@ -11,7 +11,7 @@ internal sealed class RollerConfig
     public required Point RerollClick { get; init; }
     public Rectangle? WarningRegion { get; init; }
     public Point? WarningClick { get; init; }
-    public int DelayMs { get; init; }
+    public int IntervalMs { get; init; }
     public int MaxAttempts { get; init; }
     public required List<ConditionGroup> Groups { get; init; }
 }
@@ -26,15 +26,14 @@ internal enum RollOutcome
 internal sealed record RollResult(RollOutcome Outcome, int Attempts, IReadOnlyList<StatLine> LastStats, int MatchedGroup = -1);
 
 /// <summary>
-/// Цикл перековки: клик → ждём, пока после загрузки появятся НОВЫЕ статы → проверка фильтров →
-/// пауза из настроек → следующий клик. Пока статы не меняются, раз в секунду проверяем,
-/// не ждёт ли игра подтверждения «Такие камни весьма редки».
+/// Цикл перековки с фиксированным интервалом: клик → ждём новые статы и сразу проверяем →
+/// следующий клик ровно через «интервал» после предыдущего (игра не принимает клик,
+/// пока не закончилась загрузка, поэтому кликать сразу после появления статов нельзя).
 /// </summary>
 internal sealed class StoneRoller(OcrService ocr, Action<string> log)
 {
     private const int PollMs = 50;
     private const int WarningCheckEveryMs = 1000;
-    private const int LoadTimeoutMs = 10_000;
 
     public async Task<RollResult> RunAsync(RollerConfig cfg, CancellationToken ct)
     {
@@ -60,7 +59,8 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                 var nextWarningCheck = WarningCheckEveryMs;
                 var changed = false;
 
-                while (true)
+                // Ждём новые статы, но не дольше интервала.
+                while (clicked.ElapsedMilliseconds < cfg.IntervalMs)
                 {
                     await Task.Delay(PollMs, ct);
                     stats = await ReadStatsAsync(cfg, matcher);
@@ -69,15 +69,13 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                     {
                         // Сразу читаем ещё раз: совпало — статы загрузились полностью,
                         // а не пойманы «наполовину» во время анимации загрузки.
-                        var again = await ReadStatsAsync(cfg, matcher);
-                        if (Signature(again) == current)
+                        if (Signature(await ReadStatsAsync(cfg, matcher)) == current)
                         {
                             changed = true;
                             break;
                         }
                     }
-                    if (clicked.ElapsedMilliseconds >= LoadTimeoutMs) break;
-                    if (clicked.ElapsedMilliseconds >= nextWarningCheck)
+                    else if (clicked.ElapsedMilliseconds >= nextWarningCheck)
                     {
                         nextWarningCheck += WarningCheckEveryMs;
                         await ConfirmRareWarningAsync(cfg);
@@ -85,22 +83,23 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                 }
 
                 attempts++;
-                previous = Signature(stats);
-                var loadTime = $"(через {clicked.ElapsedMilliseconds / 1000.0:0.0} с после клика)";
-                if (!changed)
+                if (changed)
+                {
+                    previous = Signature(stats);
+                    log($"#{attempts}: {string.Join(" | ", stats)} (статы через {clicked.ElapsedMilliseconds / 1000.0:0.0} с)");
+                    var matched = ConditionEvaluator.MatchingGroupIndex(cfg.Groups, stats);
+                    if (matched >= 0)
+                        return new RollResult(RollOutcome.Found, attempts, stats, matched);
+                }
+                else
                 {
                     log(stats.Count == 0
                         ? $"#{attempts}: статы не распознаны. Проверьте область кнопкой «Проверить распознавание»."
-                        : $"#{attempts}: статы не изменились за {LoadTimeoutMs / 1000} с — клик не сработал? Кликаю ещё раз.");
-                    continue;
+                        : $"#{attempts}: статы не обновились за {cfg.IntervalMs / 1000.0:0.0} с — кликаю снова. Если часто — увеличьте интервал.");
                 }
 
-                log($"#{attempts}: {string.Join(" | ", stats)} {loadTime}");
-                var matched = ConditionEvaluator.MatchingGroupIndex(cfg.Groups, stats);
-                if (matched >= 0)
-                    return new RollResult(RollOutcome.Found, attempts, stats, matched);
-
-                if (cfg.DelayMs > 0) await Task.Delay(cfg.DelayMs, ct);
+                var left = cfg.IntervalMs - (int)clicked.ElapsedMilliseconds;
+                if (left > 0) await Task.Delay(left, ct);
             }
         }
         catch (OperationCanceledException)

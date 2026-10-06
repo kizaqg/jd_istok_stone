@@ -13,8 +13,8 @@ internal sealed class AppSettings
     public int[]? RerollClick { get; set; }
     public int[]? WarningRegion { get; set; }
     public int[]? WarningClick { get; set; }
-    /// <summary>Пауза после появления новых статов перед следующим кликом (0 — кликать сразу).</summary>
-    public int PauseAfterStatsMs { get; set; }
+    /// <summary>Интервал между кликами перековки (от клика до клика).</summary>
+    public int ClickIntervalMs { get; set; } = 3500;
     public int MaxAttempts { get; set; }
     public List<List<ConditionDto>> Groups { get; set; } = [];
 

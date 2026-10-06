@@ -33,7 +33,7 @@ internal sealed class MainForm : Form
     private readonly Label _rerollLabel = StatusLabel();
     private readonly Label _warningRegionLabel = StatusLabel();
     private readonly Label _warningClickLabel = StatusLabel();
-    private readonly NumericUpDown _delay = new() { Minimum = 0, Maximum = 10000, Increment = 100, Width = 80 };
+    private readonly NumericUpDown _delay = new() { Minimum = 500, Maximum = 30000, Increment = 100, Width = 80 };
     private readonly NumericUpDown _maxAttempts = new() { Minimum = 0, Maximum = 1_000_000, Width = 80 };
     private readonly FlowLayoutPanel _groupsPanel = new()
     {
@@ -60,7 +60,7 @@ internal sealed class MainForm : Form
         _rerollClick = AppSettings.ToPoint(_settings.RerollClick);
         _warningRegion = AppSettings.ToRect(_settings.WarningRegion);
         _warningClick = AppSettings.ToPoint(_settings.WarningClick);
-        _delay.Value = Math.Clamp(_settings.PauseAfterStatsMs, (int)_delay.Minimum, (int)_delay.Maximum);
+        _delay.Value = Math.Clamp(_settings.ClickIntervalMs, (int)_delay.Minimum, (int)_delay.Maximum);
         _maxAttempts.Value = Math.Clamp(_settings.MaxAttempts, 0, (int)_maxAttempts.Maximum);
         _window = GameWindow.Find(_settings.WindowProcess, _settings.WindowTitle);
 
@@ -106,7 +106,7 @@ internal sealed class MainForm : Form
         setup.Controls.Add(MakeButton("Кнопка подтверждения", PickWarningClick), 2, 2);
         setup.Controls.Add(_warningClickLabel, 3, 2);
 
-        setup.Controls.Add(new Label { Text = "Пауза перед следующим кликом, мс (0 — сразу):", AutoSize = true, Anchor = AnchorStyles.Right }, 0, 3);
+        setup.Controls.Add(new Label { Text = "Интервал между кликами, мс:", AutoSize = true, Anchor = AnchorStyles.Right }, 0, 3);
         setup.Controls.Add(_delay, 1, 3);
         setup.Controls.Add(new Label { Text = "Лимит попыток (0 — без лимита):", AutoSize = true, Anchor = AnchorStyles.Right }, 2, 3);
         setup.Controls.Add(_maxAttempts, 3, 3);
@@ -441,7 +441,7 @@ internal sealed class MainForm : Form
             RerollClick = _rerollClick!.Value,
             WarningRegion = _warningRegion,
             WarningClick = _warningClick,
-            DelayMs = (int)_delay.Value,
+            IntervalMs = (int)_delay.Value,
             MaxAttempts = (int)_maxAttempts.Value,
             Groups = _groups.Select(g => g.Clone()).ToList(),
         };
@@ -586,7 +586,7 @@ internal sealed class MainForm : Form
         _settings.RerollClick = AppSettings.FromPoint(_rerollClick);
         _settings.WarningRegion = AppSettings.FromRect(_warningRegion);
         _settings.WarningClick = AppSettings.FromPoint(_warningClick);
-        _settings.PauseAfterStatsMs = (int)_delay.Value;
+        _settings.ClickIntervalMs = (int)_delay.Value;
         _settings.MaxAttempts = (int)_maxAttempts.Value;
         _settings.Groups = TemplateSerializer.ToDto(_groups);
         _settings.Save();
