@@ -3,8 +3,8 @@
 Один файл `JdStones.exe`. Python, Tesseract и .NET ставить не нужно.
 
 ## Где взять exe
-* GitHub → вкладка **Actions** → последняя успешная сборка → артефакт **JdStones**;
-* или **Releases**, если есть тег `v*`.
+В репозитории exe не хранится (он собирается автоматически). Скачивайте здесь:
+**https://github.com/kizaqg/jd_istok_stone/releases/latest** → раздел **Assets** → `JdStones.exe`.
 
 ## Первый запуск
 1. Запустите игру, затем `JdStones.exe` (попросит права администратора: без них клики в игру не проходят).
