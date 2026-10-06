@@ -33,7 +33,9 @@ internal sealed record RollResult(RollOutcome Outcome, int Attempts, IReadOnlyLi
 internal sealed class StoneRoller(OcrService ocr, Action<string> log)
 {
     private const int PollMs = 50;
-    private const int WarningCheckEveryMs = 1000;
+    private const int WarningCheckEveryMs = 300;
+    private const int MaxConfirmsInRow = 5;
+    private int _confirmsInRow;
 
     public async Task<RollResult> RunAsync(RollerConfig cfg, CancellationToken ct)
     {
@@ -54,31 +56,48 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                 if (cfg.MaxAttempts > 0 && attempts >= cfg.MaxAttempts)
                     return new RollResult(RollOutcome.LimitReached, attempts, stats);
 
+                // Окно «Такие камни весьма редки» перекрывает статы и кнопки: сначала закрываем его.
+                if (await ConfirmRareWarningAsync(cfg)) await Task.Delay(PollMs, ct);
+
                 InputSender.LeftClick(cfg.Window.ToScreen(cfg.RerollClick));
                 var clicked = Stopwatch.StartNew();
-                var nextWarningCheck = WarningCheckEveryMs;
+                var lastWarningCheck = long.MinValue / 2;
                 var changed = false;
 
                 // Ждём новые статы, но не дольше интервала.
                 while (clicked.ElapsedMilliseconds < cfg.IntervalMs)
                 {
                     await Task.Delay(PollMs, ct);
+
+                    if (clicked.ElapsedMilliseconds - lastWarningCheck >= WarningCheckEveryMs)
+                    {
+                        lastWarningCheck = clicked.ElapsedMilliseconds;
+                        if (await ConfirmRareWarningAsync(cfg))
+                        {
+                            // Нажали «Да» — перековка пошла только сейчас: отсчёт интервала заново.
+                            clicked.Restart();
+                            lastWarningCheck = 0;
+                            continue;
+                        }
+                    }
+
                     stats = await ReadStatsAsync(cfg, matcher);
                     var current = Signature(stats);
                     if (stats.Count > 0 && current != previous)
                     {
-                        // Сразу читаем ещё раз: совпало — статы загрузились полностью,
-                        // а не пойманы «наполовину» во время анимации загрузки.
+                        // Перед тем как принять «новые» статы, убеждаемся, что это не окно
+                        // предупреждения их закрыло, и читаем ещё раз: совпало — загрузились полностью.
+                        if (await ConfirmRareWarningAsync(cfg))
+                        {
+                            clicked.Restart();
+                            lastWarningCheck = 0;
+                            continue;
+                        }
                         if (Signature(await ReadStatsAsync(cfg, matcher)) == current)
                         {
                             changed = true;
                             break;
                         }
-                    }
-                    else if (clicked.ElapsedMilliseconds >= nextWarningCheck)
-                    {
-                        nextWarningCheck += WarningCheckEveryMs;
-                        await ConfirmRareWarningAsync(cfg);
                     }
                 }
 
@@ -116,10 +135,19 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
         if (cfg.WarningRegion is not { } region || cfg.WarningClick is not { } click) return false;
         using (var shot = WindowCapture.Capture(cfg.Window, region))
         {
-            if (!WarningDetector.IsRareStoneWarning(await ocr.RecognizeTextAsync(shot))) return false;
+            if (!WarningDetector.IsRareStoneWarning(await ocr.RecognizeTextAsync(shot)))
+            {
+                _confirmsInRow = 0;
+                return false;
+            }
         }
-        log("Предупреждение «Такие камни весьма редки» — подтверждаю.");
+        if (++_confirmsInRow > MaxConfirmsInRow)
+            throw new InvalidOperationException(
+                "Окно «Такие камни весьма редки» не закрывается после клика. " +
+                "Заново укажите «Кнопку подтверждения» — точно по кнопке «Да».");
+        log("Предупреждение «Такие камни весьма редки» — нажимаю «Да».");
         InputSender.LeftClick(cfg.Window.ToScreen(click));
+        await Task.Delay(300); // даём окну закрыться
         return true;
     }
 

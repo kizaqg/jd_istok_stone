@@ -169,6 +169,7 @@ public class ConditionTests
     [Theory]
     [InlineData("Такие камни весьма редки. Вы уверены?", true)]
     [InlineData("Такие камии весьма редкн", true)]
+    [InlineData("Количество эффектов у вашего камня истока - 7. Такие камни весьма редки. Вы уверены, что хотите провести ритуал обновления?", true)]
     [InlineData("Перековать камень?", false)]
     public void DetectsRareWarning(string text, bool expected)
     {

@@ -18,6 +18,9 @@ internal sealed class AppSettings
     public int MaxAttempts { get; set; }
     public List<List<ConditionDto>> Groups { get; set; } = [];
 
+    /// <summary>Сохранённые наборы фильтров: имя → группы условий.</summary>
+    public Dictionary<string, List<List<ConditionDto>>> Presets { get; set; } = [];
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "JdStones", "settings.json");
 

@@ -163,3 +163,36 @@ internal sealed class OcrTestForm : Form
         FormClosed += (_, _) => image.Dispose();
     }
 }
+
+/// <summary>Простое окно для ввода строки (название набора).</summary>
+internal sealed class PromptForm : Form
+{
+    private readonly TextBox _text = new() { Width = 320 };
+
+    private PromptForm(string title, string label, string value)
+    {
+        Text = title;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        StartPosition = FormStartPosition.CenterParent;
+        MinimizeBox = MaximizeBox = false;
+        AutoSize = true;
+        AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        _text.Text = value;
+
+        var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true };
+        var cancel = new Button { Text = "Отмена", DialogResult = DialogResult.Cancel, AutoSize = true };
+        var layout = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, Padding = new Padding(10) };
+        var buttons = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.RightToLeft, Width = 320 };
+        buttons.Controls.AddRange([cancel, ok]);
+        layout.Controls.AddRange([new Label { Text = label, AutoSize = true }, _text, buttons]);
+        Controls.Add(layout);
+        AcceptButton = ok;
+        CancelButton = cancel;
+    }
+
+    public static string? Ask(IWin32Window owner, string title, string label, string value = "")
+    {
+        using var form = new PromptForm(title, label, value);
+        return form.ShowDialog(owner) == DialogResult.OK ? form._text.Text : null;
+    }
+}

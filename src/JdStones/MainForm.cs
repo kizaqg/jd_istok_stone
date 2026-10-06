@@ -39,6 +39,7 @@ internal sealed class MainForm : Form
     {
         Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(8),
     };
+    private readonly ComboBox _presetBox = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 200, Margin = new Padding(0, 3, 4, 0) };
     private readonly Button _startButton = new() { Text = "Запустить (F5)", AutoSize = true };
     private readonly Button _stopButton = new() { Text = "Остановить (F6)", AutoSize = true, Enabled = false };
     private readonly Label _statusLabel = new() { AutoSize = true, Anchor = AnchorStyles.Left, Text = "Остановлено" };
@@ -132,6 +133,13 @@ internal sealed class MainForm : Form
             _groups.Add(new ConditionGroup { Conditions = [new StatCondition()] });
             RebuildGroups();
         }));
+        filtersHeader.Controls.Add(new Label { Text = "Набор:", AutoSize = true, Margin = new Padding(24, 6, 4, 0) });
+        _presetBox.SelectionChangeCommitted += (_, _) => LoadPreset();
+        NoWheel(_presetBox);
+        filtersHeader.Controls.Add(_presetBox);
+        filtersHeader.Controls.Add(MakeButton("Сохранить набор…", SavePreset));
+        filtersHeader.Controls.Add(MakeButton("Удалить набор", DeletePreset));
+        RefreshPresets();
 
         _startButton.Click += (_, _) => StartRolling();
         _stopButton.Click += (_, _) => StopRolling();
@@ -247,8 +255,74 @@ internal sealed class MainForm : Form
         var delete = new Button { Text = "✕", Width = 30, Height = stat.Height + 2 };
         delete.Click += (_, _) => { group.Conditions.Remove(condition); BeginInvoke(RebuildGroups); };
 
+        foreach (Control c in new Control[] { stat, unit, op, count }) NoWheel(c);
         row.Controls.AddRange([stat, unit, op, count, delete]);
         return row;
+    }
+
+    /// <summary>
+    /// Колёсико мыши над списком/числом не меняет значение (раньше статы случайно
+    /// перелистывались при прокрутке) — вместо этого прокручивается список фильтров.
+    /// </summary>
+    private void NoWheel(Control control)
+    {
+        control.MouseWheel += (_, e) =>
+        {
+            if (e is HandledMouseEventArgs h) h.Handled = true;
+            if (control is ComboBox { DroppedDown: true }) return;
+            var y = -_groupsPanel.AutoScrollPosition.Y - e.Delta;
+            _groupsPanel.AutoScrollPosition = new Point(0, Math.Max(0, y));
+        };
+    }
+
+    // ---------- Наборы фильтров ----------
+
+    private void RefreshPresets(string? select = null)
+    {
+        _presetBox.Items.Clear();
+        foreach (var name in _settings.Presets.Keys.OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase))
+            _presetBox.Items.Add(name);
+        if (select != null) _presetBox.SelectedItem = select;
+    }
+
+    private void LoadPreset()
+    {
+        if (_cts != null || _presetBox.SelectedItem is not string name || !_settings.Presets.TryGetValue(name, out var dto)) return;
+        _groups.Clear();
+        _groups.AddRange(TemplateSerializer.FromDto(dto));
+        RebuildGroups();
+        SaveSettings();
+        Log($"Загружен набор «{name}».");
+    }
+
+    private void SavePreset()
+    {
+        CommitPendingEdits();
+        if (!_groups.Any(g => g.Conditions.Count > 0))
+        {
+            MessageBox.Show(this, "Нет фильтров для сохранения.", "Набор", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            return;
+        }
+        var name = PromptForm.Ask(this, "Сохранить набор", "Название набора:", _presetBox.SelectedItem as string ?? "")?.Trim();
+        if (string.IsNullOrEmpty(name)) return;
+        if (_settings.Presets.ContainsKey(name) &&
+            MessageBox.Show(this, $"Набор «{name}» уже есть. Заменить?", "Набор", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+        _settings.Presets[name] = TemplateSerializer.ToDto(_groups);
+        SaveSettings();
+        RefreshPresets(name);
+        Log($"Набор «{name}» сохранён.");
+    }
+
+    private void DeletePreset()
+    {
+        if (_presetBox.SelectedItem is not string name) return;
+        if (MessageBox.Show(this, $"Удалить набор «{name}»?", "Набор", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+        _settings.Presets.Remove(name);
+        SaveSettings();
+        RefreshPresets();
+        Log($"Набор «{name}» удалён.");
     }
 
     // ---------- Выбор окна, областей и точек ----------
