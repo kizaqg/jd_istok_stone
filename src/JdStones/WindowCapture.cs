@@ -5,8 +5,10 @@ using System.Runtime.InteropServices;
 namespace JdStones;
 
 /// <summary>
-/// Снимает изображение окна игры напрямую (PrintWindow), даже если его перекрывают другие окна.
-/// Если окно так не рисуется (бывает в полноэкранном режиме) — берёт пиксели с экрана в месте окна.
+/// Снимает область окна игры. Основной способ — копия пикселей с экрана: игру никак не трогает.
+/// Если область чем-то перекрыта (или с экрана пришла чёрная картинка) — просим окно
+/// нарисовать себя (PrintWindow). Этот способ работает «сквозь» другие окна, но заставляет
+/// DirectX-игру перерисоваться, из-за чего она моргает, поэтому он только запасной.
 /// </summary>
 internal static class WindowCapture
 {
@@ -27,16 +29,38 @@ internal static class WindowCapture
         if (region.Width <= 0 || region.Height <= 0)
             throw new InvalidOperationException("Выбранная область за пределами окна игры. Выберите её заново.");
 
-        var shot = TryPrintWindow(window, client, region);
-        if (shot != null && !IsBlank(shot)) return shot;
-        shot?.Dispose();
-
+        var onScreen = new Rectangle(client.X + region.X, client.Y + region.Y, region.Width, region.Height);
         var fromScreen = new Bitmap(region.Width, region.Height, PixelFormat.Format32bppRgb);
         using (var g = Graphics.FromImage(fromScreen))
         {
-            g.CopyFromScreen(client.X + region.X, client.Y + region.Y, 0, 0, region.Size);
+            g.CopyFromScreen(onScreen.X, onScreen.Y, 0, 0, region.Size);
         }
+        if (IsGameOnTop(window, onScreen) && !IsBlank(fromScreen)) return fromScreen;
+
+        var printed = TryPrintWindow(window, client, region);
+        if (printed != null && !IsBlank(printed))
+        {
+            fromScreen.Dispose();
+            return printed;
+        }
+        printed?.Dispose();
         return fromScreen;
+    }
+
+    /// <summary>Видна ли область на экране целиком (углы и центр принадлежат окну игры).</summary>
+    private static bool IsGameOnTop(GameWindow window, Rectangle r)
+    {
+        Point[] probes =
+        [
+            new(r.Left + 1, r.Top + 1), new(r.Right - 2, r.Top + 1), new(r.Left + 1, r.Bottom - 2),
+            new(r.Right - 2, r.Bottom - 2), new(r.Left + r.Width / 2, r.Top + r.Height / 2),
+        ];
+        foreach (var p in probes)
+        {
+            var hit = Native.WindowFromPoint(new Native.POINT { X = p.X, Y = p.Y });
+            if (Native.GetAncestor(hit, Native.GA_ROOT) != window.Handle) return false;
+        }
+        return true;
     }
 
     private static Bitmap? TryPrintWindow(GameWindow window, Rectangle client, Rectangle region)
