@@ -33,7 +33,7 @@ internal sealed class MainForm : Form
     private readonly Label _rerollLabel = StatusLabel();
     private readonly Label _warningRegionLabel = StatusLabel();
     private readonly Label _warningClickLabel = StatusLabel();
-    private readonly NumericUpDown _delay = new() { Minimum = 100, Maximum = 10000, Increment = 100, Width = 80 };
+    private readonly NumericUpDown _delay = new() { Minimum = 50, Maximum = 10000, Increment = 50, Width = 80 };
     private readonly NumericUpDown _maxAttempts = new() { Minimum = 0, Maximum = 1_000_000, Width = 80 };
     private readonly FlowLayoutPanel _groupsPanel = new()
     {

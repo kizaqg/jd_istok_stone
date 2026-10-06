@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using JdStones.Core;
 
@@ -24,12 +25,13 @@ internal enum RollOutcome
 
 internal sealed record RollResult(RollOutcome Outcome, int Attempts, IReadOnlyList<StatLine> LastStats, int MatchedGroup = -1);
 
-/// <summary>Цикл перековки: клик → (подтверждение редкого камня) → чтение статов → проверка фильтров.</summary>
+/// <summary>
+/// Цикл перековки: клик → задержка → чтение статов → проверка фильтров.
+/// Единственная пауза — задержка из настроек. Если статы не изменились, значит клик
+/// не сработал или игра ждёт подтверждения редкого камня: только тогда проверяем предупреждение.
+/// </summary>
 internal sealed class StoneRoller(OcrService ocr, Action<string> log)
 {
-    // Если после клика статы те же, ждём обновления окна ещё немного, а не читаем старый результат.
-    private const int ChangeWaitStepMs = 200;
-    private const int ChangeWaitSteps = 10;
 
     public async Task<RollResult> RunAsync(RollerConfig cfg, CancellationToken ct)
     {
@@ -51,30 +53,29 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                 InputSender.LeftClick(cfg.Window.ToScreen(cfg.RerollClick));
                 await Task.Delay(cfg.DelayMs, ct);
 
-                if (cfg.WarningRegion is { } warnRegion && cfg.WarningClick is { } warnClick)
-                {
-                    using var warnShot = WindowCapture.Capture(cfg.Window, warnRegion);
-                    if (WarningDetector.IsRareStoneWarning(await ocr.RecognizeTextAsync(warnShot)))
-                    {
-                        log("Предупреждение «Такие камни весьма редки» — подтверждаю.");
-                        InputSender.LeftClick(cfg.Window.ToScreen(warnClick));
-                        await Task.Delay(cfg.DelayMs, ct);
-                    }
-                }
-
+                var started = Stopwatch.StartNew();
                 var (rows, signature) = await ReadRowsAsync(cfg);
-                for (var i = 0; i < ChangeWaitSteps && signature == previous; i++)
+                var unchanged = signature == previous;
+
+                if (unchanged || previous == null)
                 {
-                    await Task.Delay(ChangeWaitStepMs, ct);
-                    (rows, signature) = await ReadRowsAsync(cfg);
+                    if (await ConfirmRareWarningAsync(cfg, ct))
+                    {
+                        (rows, signature) = await ReadRowsAsync(cfg);
+                        unchanged = signature == previous;
+                    }
                 }
                 previous = signature;
                 attempts++;
 
+                // Старые статы уже проверены и не подошли — просто кликаем дальше, без ожиданий.
                 stats = StatParser.Parse(rows, matcher);
-                log(stats.Count > 0
-                    ? $"#{attempts}: {string.Join(" | ", stats)}"
-                    : $"#{attempts}: статы не распознаны. Проверьте область кнопкой «Проверить распознавание».");
+                var timing = $"(распознавание {started.ElapsedMilliseconds} мс)";
+                log(stats.Count == 0
+                    ? $"#{attempts}: статы не распознаны {timing}. Проверьте область кнопкой «Проверить распознавание»."
+                    : unchanged
+                        ? $"#{attempts}: статы не изменились — клик не сработал? {timing}"
+                        : $"#{attempts}: {string.Join(" | ", stats)} {timing}");
 
                 var matched = ConditionEvaluator.MatchingGroupIndex(cfg.Groups, stats);
                 if (matched >= 0)
@@ -85,6 +86,20 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
         {
             return new RollResult(RollOutcome.Stopped, attempts, stats);
         }
+    }
+
+    /// <returns>true, если предупреждение было и мы его подтвердили.</returns>
+    private async Task<bool> ConfirmRareWarningAsync(RollerConfig cfg, CancellationToken ct)
+    {
+        if (cfg.WarningRegion is not { } region || cfg.WarningClick is not { } click) return false;
+        using (var shot = WindowCapture.Capture(cfg.Window, region))
+        {
+            if (!WarningDetector.IsRareStoneWarning(await ocr.RecognizeTextAsync(shot))) return false;
+        }
+        log("Предупреждение «Такие камни весьма редки» — подтверждаю.");
+        InputSender.LeftClick(cfg.Window.ToScreen(click));
+        await Task.Delay(cfg.DelayMs, ct);
+        return true;
     }
 
     private async Task<(IReadOnlyList<string> Rows, string Signature)> ReadRowsAsync(RollerConfig cfg)
