@@ -26,24 +26,29 @@ internal enum RollOutcome
 internal sealed record RollResult(RollOutcome Outcome, int Attempts, IReadOnlyList<StatLine> LastStats, int MatchedGroup = -1);
 
 /// <summary>
-/// Цикл перековки: клик → задержка → чтение статов → проверка фильтров.
-/// Единственная пауза — задержка из настроек. Если статы не изменились, значит клик
-/// не сработал или игра ждёт подтверждения редкого камня: только тогда проверяем предупреждение.
+/// Цикл перековки: клик → ждём, пока после загрузки появятся НОВЫЕ статы → проверка фильтров →
+/// пауза из настроек → следующий клик. Пока статы не меняются, раз в секунду проверяем,
+/// не ждёт ли игра подтверждения «Такие камни весьма редки».
 /// </summary>
 internal sealed class StoneRoller(OcrService ocr, Action<string> log)
 {
+    private const int PollMs = 150;
+    private const int WarningCheckEveryMs = 1000;
+    private const int LoadTimeoutMs = 10_000;
 
     public async Task<RollResult> RunAsync(RollerConfig cfg, CancellationToken ct)
     {
         var customStats = cfg.Groups.SelectMany(g => g.Conditions).Select(c => c.Stat);
         var matcher = new StatMatcher(StatCatalog.Predefined.Concat(customStats));
 
-        string? previous = null;
         IReadOnlyList<StatLine> stats = [];
         var attempts = 0;
 
         try
         {
+            // Статы, которые на экране до первого клика: новыми считаем только отличающиеся от них.
+            var previous = Signature(await ReadStatsAsync(cfg, matcher));
+
             while (true)
             {
                 ct.ThrowIfCancellationRequested();
@@ -51,35 +56,54 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                     return new RollResult(RollOutcome.LimitReached, attempts, stats);
 
                 InputSender.LeftClick(cfg.Window.ToScreen(cfg.RerollClick));
-                await Task.Delay(cfg.DelayMs, ct);
+                var clicked = Stopwatch.StartNew();
+                var nextWarningCheck = WarningCheckEveryMs;
+                var changed = false;
+                string? candidate = null;
 
-                var started = Stopwatch.StartNew();
-                var (rows, signature) = await ReadRowsAsync(cfg);
-                var unchanged = signature == previous;
-
-                if (unchanged || previous == null)
+                while (true)
                 {
-                    if (await ConfirmRareWarningAsync(cfg, ct))
+                    await Task.Delay(PollMs, ct);
+                    stats = await ReadStatsAsync(cfg, matcher);
+                    var current = Signature(stats);
+                    if (stats.Count > 0 && current != previous)
                     {
-                        (rows, signature) = await ReadRowsAsync(cfg);
-                        unchanged = signature == previous;
+                        // Новые статы принимаем, когда они дважды подряд прочитались одинаково:
+                        // так не поймаем их «наполовину» во время анимации загрузки.
+                        if (current == candidate)
+                        {
+                            changed = true;
+                            break;
+                        }
+                        candidate = current;
+                        continue;
+                    }
+                    candidate = null;
+                    if (clicked.ElapsedMilliseconds >= LoadTimeoutMs) break;
+                    if (clicked.ElapsedMilliseconds >= nextWarningCheck)
+                    {
+                        nextWarningCheck += WarningCheckEveryMs;
+                        await ConfirmRareWarningAsync(cfg);
                     }
                 }
-                previous = signature;
+
                 attempts++;
+                previous = Signature(stats);
+                var loadTime = $"(через {clicked.ElapsedMilliseconds / 1000.0:0.0} с после клика)";
+                if (!changed)
+                {
+                    log(stats.Count == 0
+                        ? $"#{attempts}: статы не распознаны. Проверьте область кнопкой «Проверить распознавание»."
+                        : $"#{attempts}: статы не изменились за {LoadTimeoutMs / 1000} с — клик не сработал? Кликаю ещё раз.");
+                    continue;
+                }
 
-                // Старые статы уже проверены и не подошли — просто кликаем дальше, без ожиданий.
-                stats = StatParser.Parse(rows, matcher);
-                var timing = $"(распознавание {started.ElapsedMilliseconds} мс)";
-                log(stats.Count == 0
-                    ? $"#{attempts}: статы не распознаны {timing}. Проверьте область кнопкой «Проверить распознавание»."
-                    : unchanged
-                        ? $"#{attempts}: статы не изменились — клик не сработал? {timing}"
-                        : $"#{attempts}: {string.Join(" | ", stats)} {timing}");
-
+                log($"#{attempts}: {string.Join(" | ", stats)} {loadTime}");
                 var matched = ConditionEvaluator.MatchingGroupIndex(cfg.Groups, stats);
                 if (matched >= 0)
                     return new RollResult(RollOutcome.Found, attempts, stats, matched);
+
+                await Task.Delay(cfg.DelayMs, ct);
             }
         }
         catch (OperationCanceledException)
@@ -88,8 +112,10 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
         }
     }
 
+    private static string Signature(IReadOnlyList<StatLine> stats) => string.Join("\n", stats);
+
     /// <returns>true, если предупреждение было и мы его подтвердили.</returns>
-    private async Task<bool> ConfirmRareWarningAsync(RollerConfig cfg, CancellationToken ct)
+    private async Task<bool> ConfirmRareWarningAsync(RollerConfig cfg)
     {
         if (cfg.WarningRegion is not { } region || cfg.WarningClick is not { } click) return false;
         using (var shot = WindowCapture.Capture(cfg.Window, region))
@@ -98,14 +124,12 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
         }
         log("Предупреждение «Такие камни весьма редки» — подтверждаю.");
         InputSender.LeftClick(cfg.Window.ToScreen(click));
-        await Task.Delay(cfg.DelayMs, ct);
         return true;
     }
 
-    private async Task<(IReadOnlyList<string> Rows, string Signature)> ReadRowsAsync(RollerConfig cfg)
+    private async Task<IReadOnlyList<StatLine>> ReadStatsAsync(RollerConfig cfg, StatMatcher matcher)
     {
         using var shot = WindowCapture.Capture(cfg.Window, cfg.StatsRegion);
-        var rows = StatParser.GroupIntoRows(await ocr.RecognizeAsync(shot));
-        return (rows, string.Join("\n", rows));
+        return StatParser.Parse(StatParser.GroupIntoRows(await ocr.RecognizeAsync(shot)), matcher);
     }
 }

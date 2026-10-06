@@ -33,7 +33,7 @@ internal sealed class MainForm : Form
     private readonly Label _rerollLabel = StatusLabel();
     private readonly Label _warningRegionLabel = StatusLabel();
     private readonly Label _warningClickLabel = StatusLabel();
-    private readonly NumericUpDown _delay = new() { Minimum = 50, Maximum = 10000, Increment = 50, Width = 80 };
+    private readonly NumericUpDown _delay = new() { Minimum = 0, Maximum = 10000, Increment = 100, Width = 80 };
     private readonly NumericUpDown _maxAttempts = new() { Minimum = 0, Maximum = 1_000_000, Width = 80 };
     private readonly FlowLayoutPanel _groupsPanel = new()
     {
@@ -106,7 +106,7 @@ internal sealed class MainForm : Form
         setup.Controls.Add(MakeButton("Кнопка подтверждения", PickWarningClick), 2, 2);
         setup.Controls.Add(_warningClickLabel, 3, 2);
 
-        setup.Controls.Add(new Label { Text = "Задержка после клика, мс:", AutoSize = true, Anchor = AnchorStyles.Right }, 0, 3);
+        setup.Controls.Add(new Label { Text = "Пауза после появления статов, мс:", AutoSize = true, Anchor = AnchorStyles.Right }, 0, 3);
         setup.Controls.Add(_delay, 1, 3);
         setup.Controls.Add(new Label { Text = "Лимит попыток (0 — без лимита):", AutoSize = true, Anchor = AnchorStyles.Right }, 2, 3);
         setup.Controls.Add(_maxAttempts, 3, 3);
