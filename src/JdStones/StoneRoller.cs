@@ -32,7 +32,7 @@ internal sealed record RollResult(RollOutcome Outcome, int Attempts, IReadOnlyLi
 /// </summary>
 internal sealed class StoneRoller(OcrService ocr, Action<string> log)
 {
-    private const int PollMs = 150;
+    private const int PollMs = 50;
     private const int WarningCheckEveryMs = 1000;
     private const int LoadTimeoutMs = 10_000;
 
@@ -59,7 +59,6 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                 var clicked = Stopwatch.StartNew();
                 var nextWarningCheck = WarningCheckEveryMs;
                 var changed = false;
-                string? candidate = null;
 
                 while (true)
                 {
@@ -68,17 +67,15 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                     var current = Signature(stats);
                     if (stats.Count > 0 && current != previous)
                     {
-                        // Новые статы принимаем, когда они дважды подряд прочитались одинаково:
-                        // так не поймаем их «наполовину» во время анимации загрузки.
-                        if (current == candidate)
+                        // Сразу читаем ещё раз: совпало — статы загрузились полностью,
+                        // а не пойманы «наполовину» во время анимации загрузки.
+                        var again = await ReadStatsAsync(cfg, matcher);
+                        if (Signature(again) == current)
                         {
                             changed = true;
                             break;
                         }
-                        candidate = current;
-                        continue;
                     }
-                    candidate = null;
                     if (clicked.ElapsedMilliseconds >= LoadTimeoutMs) break;
                     if (clicked.ElapsedMilliseconds >= nextWarningCheck)
                     {
@@ -103,7 +100,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                 if (matched >= 0)
                     return new RollResult(RollOutcome.Found, attempts, stats, matched);
 
-                await Task.Delay(cfg.DelayMs, ct);
+                if (cfg.DelayMs > 0) await Task.Delay(cfg.DelayMs, ct);
             }
         }
         catch (OperationCanceledException)
