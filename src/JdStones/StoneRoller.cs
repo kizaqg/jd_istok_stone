@@ -107,7 +107,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                     previous = Signature(stats);
                     log($"#{attempts}: {string.Join(" | ", stats)} (статы через {clicked.ElapsedMilliseconds / 1000.0:0.0} с)");
                     var matched = ConditionEvaluator.MatchingGroupIndex(cfg.Groups, stats);
-                    if (matched >= 0)
+                    if (matched >= 0 && await ConfirmMatchAsync(cfg, matcher))
                         return new RollResult(RollOutcome.Found, attempts, stats, matched);
                 }
                 else
@@ -151,9 +151,31 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
         return true;
     }
 
-    private async Task<IReadOnlyList<StatLine>> ReadStatsAsync(RollerConfig cfg, StatMatcher matcher)
+    // Похожие статы («Защита/крит.ат.» и «Защита/крит.ур.») отличаются парой мелких букв,
+    // и OCR иногда путает «а/у», «т/р». Находку перепроверяем ещё двумя независимыми
+    // чтениями (другое увеличение) и принимаем, если подходят минимум 2 из 3.
+    private static readonly int[] VerifyScales = [4, 2];
+
+    private async Task<bool> ConfirmMatchAsync(RollerConfig cfg, StatMatcher matcher)
+    {
+        var votes = 1;
+        var rejected = new List<string>();
+        foreach (var scale in VerifyScales)
+        {
+            var again = await ReadStatsAsync(cfg, matcher, scale);
+            if (ConditionEvaluator.MatchingGroupIndex(cfg.Groups, again) >= 0) votes++;
+            else rejected.Add(string.Join(" | ", again));
+        }
+        if (votes >= 2) return true;
+        log("   Перепроверка не подтвердила находку (вероятно, ошибка распознавания) — кручу дальше. " +
+            "Повторные чтения: " + string.Join("  //  ", rejected));
+        return false;
+    }
+
+    private async Task<IReadOnlyList<StatLine>> ReadStatsAsync(RollerConfig cfg, StatMatcher matcher,
+        int scale = OcrService.DefaultScale)
     {
         using var shot = WindowCapture.Capture(cfg.Window, cfg.StatsRegion);
-        return StatParser.Parse(StatParser.GroupIntoRows(await ocr.RecognizeAsync(shot)), matcher);
+        return StatParser.Parse(StatParser.GroupIntoRows(await ocr.RecognizeAsync(shot, scale)), matcher);
     }
 }

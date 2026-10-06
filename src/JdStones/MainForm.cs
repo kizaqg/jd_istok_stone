@@ -546,7 +546,8 @@ internal sealed class MainForm : Form
                     Activate();
                     MessageBox.Show(this,
                         $"{LuckyMessage}\n\nПопыток: {result.Attempts}\n{string.Join("\n", result.LastStats)}" +
-                        $"\n\nСработала группа {result.MatchedGroup + 1}:\n{why}",
+                        $"\n\nСработала группа {result.MatchedGroup + 1}:\n{why}" +
+                        $"\n\nКак прочитан текст:\n{string.Join("\n", result.LastStats.Select(l => l.RawText))}",
                         "Камень найден", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     break;
                 case RollOutcome.LimitReached:

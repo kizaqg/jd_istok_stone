@@ -14,7 +14,7 @@ namespace JdStones;
 /// <summary>Распознавание текста встроенным в Windows OCR (без Tesseract и прочих установок).</summary>
 internal sealed class OcrService
 {
-    private const int Scale = 3;
+    public const int DefaultScale = 3;
     private readonly OcrEngine _engine;
 
     private OcrService(OcrEngine engine) => _engine = engine;
@@ -37,9 +37,10 @@ internal sealed class OcrService
         "После установки перезапустите программу.";
 
     /// <returns>Слова с координатами в пикселях исходной картинки.</returns>
-    public async Task<IReadOnlyList<OcrWord>> RecognizeAsync(Bitmap source)
+    /// <param name="scale">Во сколько раз увеличить картинку перед распознаванием.
+    /// Разное увеличение даёт независимые чтения — используется для перепроверки находки.</param>
+    public async Task<IReadOnlyList<OcrWord>> RecognizeAsync(Bitmap source, int scale = DefaultScale)
     {
-        var scale = Scale;
         while (scale > 1 && Math.Max(source.Width, source.Height) * scale > OcrEngine.MaxImageDimension) scale--;
 
         using var prepared = Prepare(source, scale);

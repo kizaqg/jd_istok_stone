@@ -66,6 +66,23 @@ public class ParserTests
         Assert.Equal(percent, line.IsPercent);
     }
 
+    [Theory]
+    [InlineData("Защита/крит.ат. 0.1%", "Защита/крит.ат.")]
+    [InlineData("Защита/крит.ур. 0.1%", "Защита/крит.ур.")]
+    [InlineData("Защита/крит.аг. 0.1%", "Защита/крит.ат.")] // одна ошибка, ближе к «ат»
+    public void DistinguishesSimilarDefenceStats(string row, string expected)
+    {
+        Assert.Equal(expected, Assert.Single(StatParser.Parse([row], Matcher)).Stat);
+    }
+
+    [Theory]
+    [InlineData("Защита/крит.ут. 0.1%")] // одинаково похоже на «ат» и «ур»
+    [InlineData("Защита/крит.ар. 0.1%")]
+    public void AmbiguousMisreadIsNotGuessed(string row)
+    {
+        Assert.Empty(StatParser.Parse([row], Matcher));
+    }
+
     [Fact]
     public void SkipsRowsWithoutKnownStat()
     {

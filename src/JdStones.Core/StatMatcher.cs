@@ -22,6 +22,7 @@ public sealed class StatMatcher
         string? best = null;
         var bestDistance = int.MaxValue;
         var bestNormLength = 0;
+        var tie = false;
         foreach (var (name, candidate) in _candidates)
         {
             var d = TextNormalizer.Levenshtein(norm, candidate);
@@ -30,8 +31,16 @@ public sealed class StatMatcher
                 best = name;
                 bestDistance = d;
                 bestNormLength = candidate.Length;
+                tie = false;
+            }
+            else if (d == bestDistance)
+            {
+                tie = true;
             }
         }
+        // Текст с ошибкой одинаково похож на два стата (например, «крит.ут» — на «крит.ат» и
+        // «крит.ур»): угадывать нельзя, считаем строку нераспознанной.
+        if (tie && bestDistance > 0) return null;
         return best != null && bestDistance <= TextNormalizer.AllowedErrors(bestNormLength) ? best : null;
     }
 
