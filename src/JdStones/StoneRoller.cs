@@ -22,7 +22,7 @@ internal enum RollOutcome
     LimitReached,
 }
 
-internal sealed record RollResult(RollOutcome Outcome, int Attempts, IReadOnlyList<StatLine> LastStats);
+internal sealed record RollResult(RollOutcome Outcome, int Attempts, IReadOnlyList<StatLine> LastStats, int MatchedGroup = -1);
 
 /// <summary>Цикл перековки: клик → (подтверждение редкого камня) → чтение статов → проверка фильтров.</summary>
 internal sealed class StoneRoller(OcrService ocr, Action<string> log)
@@ -76,8 +76,9 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                     ? $"#{attempts}: {string.Join(" | ", stats)}"
                     : $"#{attempts}: статы не распознаны. Проверьте область кнопкой «Проверить распознавание».");
 
-                if (ConditionEvaluator.Matches(cfg.Groups, stats))
-                    return new RollResult(RollOutcome.Found, attempts, stats);
+                var matched = ConditionEvaluator.MatchingGroupIndex(cfg.Groups, stats);
+                if (matched >= 0)
+                    return new RollResult(RollOutcome.Found, attempts, stats, matched);
             }
         }
         catch (OperationCanceledException)

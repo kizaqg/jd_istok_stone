@@ -50,9 +50,31 @@ public static class ConditionEvaluator
         };
     }
 
-    /// <summary>Хотя бы одна непустая группа, в которой выполнены все условия.</summary>
-    public static bool Matches(IEnumerable<ConditionGroup> groups, IReadOnlyList<StatLine> lines) =>
-        groups.Any(g => g.Conditions.Count > 0 && g.Conditions.All(c => IsMet(c, lines)));
+    /// <summary>
+    /// Хотя бы одна непустая группа, в которой выполнены все условия.
+    /// Если статы не распознаны вовсе — никогда не «находим» камень.
+    /// </summary>
+    public static bool Matches(IReadOnlyList<ConditionGroup> groups, IReadOnlyList<StatLine> lines) =>
+        MatchingGroupIndex(groups, lines) >= 0;
+
+    /// <returns>Номер (с 0) первой сработавшей группы или -1.</returns>
+    public static int MatchingGroupIndex(IReadOnlyList<ConditionGroup> groups, IReadOnlyList<StatLine> lines)
+    {
+        if (lines.Count == 0) return -1;
+        for (var i = 0; i < groups.Count; i++)
+        {
+            var g = groups[i];
+            if (g.Conditions.Count > 0 && g.Conditions.All(c => IsMet(c, lines))) return i;
+        }
+        return -1;
+    }
+
+    /// <summary>Условие «≥ 0» выполняется всегда и ничего не фильтрует.</summary>
+    public static bool IsAlwaysTrue(StatCondition c) => c.Operator == CompareOp.AtLeast && c.Count <= 0;
+
+    /// <summary>Группа срабатывает на камне, где нет ни одного из указанных статов (например, «Атака ≤ 1»).</summary>
+    public static bool MatchesWithoutStats(ConditionGroup g) =>
+        g.Conditions.Count > 0 && g.Conditions.All(c => IsMet(c, []));
 
     private static bool UnitMatches(StatUnit unit, StatLine line) => unit switch
     {

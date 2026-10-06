@@ -12,7 +12,7 @@ internal sealed class MainForm : Form
     private const int HotkeyStop = 2;
     private const uint VkF5 = 0x74;
     private const uint VkF6 = 0x75;
-    private const string LuckyMessage = "Лаки лаки бро, надеюсь хоть с этим камушком не пасасешь!";
+    private const string LuckyMessage = "АТЛИЧНАЯ БАЛЕНСА ЩАС ЧО";
 
     private static readonly string[] UnitTexts = ["любое", "в %", "числом"];
     private static readonly string[] OperatorTexts = ["≥", "≤", "="];
@@ -346,6 +346,7 @@ internal sealed class MainForm : Form
             return;
         }
 
+        CommitPendingEdits();
         try
         {
             var shot = WindowCapture.Capture(window, region);
@@ -361,7 +362,7 @@ internal sealed class MainForm : Form
             foreach (var line in lines) report.AppendLine($"  {line.Stat,-18} {line.Value:0.###}{(line.IsPercent ? "%" : "")}   ({(line.IsPercent ? "в %" : "числом")})");
             report.AppendLine().AppendLine($"Фильтры сейчас: {(ConditionEvaluator.Matches(_groups, lines) ? "ПОДХОДИТ" : "не подходит")}");
             foreach (var c in conditions.Where(c => c.Stat.Length > 0))
-                report.AppendLine($"  {c.Stat} ({UnitTexts[(int)c.Unit]}) {OperatorTexts[(int)c.Operator]} {c.Count}: найдено {ConditionEvaluator.CountMatching(c, lines)}");
+                report.AppendLine($"  {DescribeCondition(c)}: найдено {ConditionEvaluator.CountMatching(c, lines)}");
 
             if (_warningRegion is { } warnRegion)
             {
@@ -383,8 +384,26 @@ internal sealed class MainForm : Form
 
     // ---------- Запуск / остановка ----------
 
+    /// <summary>
+    /// Число, введённое с клавиатуры в поле «Строк», попадает в Value только после выхода из поля.
+    /// Если сразу нажать F5 — старое значение. Чтение Value принудительно применяет введённое.
+    /// </summary>
+    private void CommitPendingEdits()
+    {
+        void Walk(Control parent)
+        {
+            foreach (Control c in parent.Controls)
+            {
+                if (c is NumericUpDown n) _ = n.Value;
+                Walk(c);
+            }
+        }
+        Walk(_groupsPanel);
+    }
+
     private RollerConfig? BuildConfig()
     {
+        CommitPendingEdits();
         string? error = null;
         if (_ocr == null) error = OcrService.MissingLanguageHelp;
         else if (_statsRegion == null) error = "Выберите область статов.";
@@ -394,11 +413,24 @@ internal sealed class MainForm : Form
         else if (!_groups.Any(g => g.Conditions.Count > 0)) error = "Добавьте хотя бы один фильтр.";
         else if (_groups.SelectMany(g => g.Conditions).Any(c => string.IsNullOrWhiteSpace(c.Stat)))
             error = "В одном из условий не указан стат.";
+        else if (_groups.SelectMany(g => g.Conditions).FirstOrDefault(ConditionEvaluator.IsAlwaysTrue) is { } always)
+            error = $"Условие «{always.Stat} ≥ 0» выполняется на любом камне. Укажите количество строк от 1.";
 
         if (error != null)
         {
             MessageBox.Show(this, error, "Нельзя запустить", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return null;
+        }
+        var loose = _groups.Select((g, i) => (g, i)).Where(x => ConditionEvaluator.MatchesWithoutStats(x.g)).ToList();
+        if (loose.Count > 0)
+        {
+            var text = string.Join("\n", loose.Select(x => $"Группа {x.i + 1}: {DescribeGroup(x.g)}"));
+            var answer = MessageBox.Show(this,
+                "Эта группа сработает на камне, где этих статов нет вообще:\n\n" + text +
+                "\n\n«≤» и «=» означают «не больше» и «ровно». Чтобы искать камень С нужными статами, " +
+                "используйте «≥» и количество от 1.\n\nВсё равно запустить?",
+                "Проверьте фильтры", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (answer != DialogResult.Yes) return null;
         }
         if (RequireWindow() is not { } window) return null;
 
@@ -432,10 +464,15 @@ internal sealed class MainForm : Form
             switch (result.Outcome)
             {
                 case RollOutcome.Found:
-                    Log($"НАЙДЕНО за {result.Attempts} попыток: {string.Join(" | ", result.LastStats)}");
+                    var group = cfg.Groups[result.MatchedGroup];
+                    var why = string.Join("\n", group.Conditions.Select(c =>
+                        $"{DescribeCondition(c)}: найдено {ConditionEvaluator.CountMatching(c, result.LastStats)}"));
+                    Log($"НАЙДЕНО за {result.Attempts} попыток (группа {result.MatchedGroup + 1}): {string.Join(" | ", result.LastStats)}");
                     SystemSounds.Exclamation.Play();
                     Activate();
-                    MessageBox.Show(this, $"{LuckyMessage}\n\nПопыток: {result.Attempts}\n{string.Join("\n", result.LastStats)}",
+                    MessageBox.Show(this,
+                        $"{LuckyMessage}\n\nПопыток: {result.Attempts}\n{string.Join("\n", result.LastStats)}" +
+                        $"\n\nСработала группа {result.MatchedGroup + 1}:\n{why}",
                         "Камень найден", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     break;
                 case RollOutcome.LimitReached:
@@ -461,6 +498,11 @@ internal sealed class MainForm : Form
     }
 
     private void StopRolling() => _cts?.Cancel();
+
+    private static string DescribeCondition(StatCondition c) =>
+        $"{c.Stat} ({UnitTexts[(int)c.Unit]}) {OperatorTexts[(int)c.Operator]} {c.Count}";
+
+    private static string DescribeGroup(ConditionGroup g) => string.Join(" И ", g.Conditions.Select(DescribeCondition));
 
     private void SetRunning(bool running)
     {

@@ -110,6 +110,45 @@ public class ConditionTests
             Lines(("Снижен. урона", true), ("Снижен. урона", true), ("Снижен. урона", false))));
     }
 
+    // Камень со скриншота: «Атаки» нет — фильтр на Атаку срабатывать не должен.
+    private static readonly string[] StoneWithoutAttack =
+    [
+        "Меткость 0.64 0.64/8.40",
+        "Дух 41.60 41.60/67.20",
+        "Здоровье 33.60 33.60/588.00",
+        "Защита/крит.ур. 0.209% 0.209%/0.630%",
+        "Меткость 2.36 2.36/8.40",
+    ];
+
+    [Fact]
+    public void AttackFilterDoesNotMatchStoneWithoutAttack()
+    {
+        var lines = StatParser.Parse(StoneWithoutAttack, new StatMatcher(StatCatalog.Predefined));
+        Assert.Equal(5, lines.Count);
+        Assert.Equal(2, lines.Count(l => l.Stat == "Меткость"));
+
+        List<ConditionGroup> groups = [new() { Conditions = [new() { Stat = "Атака", Count = 1 }] }];
+        Assert.Equal(-1, ConditionEvaluator.MatchingGroupIndex(groups, lines));
+    }
+
+    [Fact]
+    public void NothingRecognizedNeverMatches()
+    {
+        List<ConditionGroup> groups = [new() { Conditions = [new() { Stat = "Атака", Operator = CompareOp.AtMost, Count = 1 }] }];
+        Assert.False(ConditionEvaluator.Matches(groups, []));
+    }
+
+    [Fact]
+    public void DetectsFiltersThatMatchWithoutStats()
+    {
+        Assert.True(ConditionEvaluator.IsAlwaysTrue(new StatCondition { Stat = "Атака", Count = 0 }));
+        Assert.False(ConditionEvaluator.IsAlwaysTrue(new StatCondition { Stat = "Атака", Count = 1 }));
+        Assert.True(ConditionEvaluator.MatchesWithoutStats(new ConditionGroup
+            { Conditions = [new() { Stat = "Атака", Operator = CompareOp.AtMost, Count = 1 }] }));
+        Assert.False(ConditionEvaluator.MatchesWithoutStats(new ConditionGroup
+            { Conditions = [new() { Stat = "Атака", Operator = CompareOp.AtMost, Count = 1 }, new() { Stat = "Дух", Count = 1 }] }));
+    }
+
     [Fact]
     public void EmptyGroupNeverMatches()
     {
