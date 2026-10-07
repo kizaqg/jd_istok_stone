@@ -92,4 +92,21 @@ internal static class Native
     public const uint WM_SETFOCUS = 0x0007;
     public const uint WM_ACTIVATEAPP = 0x001C;
     public const int WA_ACTIVE = 1;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINDOWPLACEMENT
+    {
+        public int length;
+        public int flags;
+        public int showCmd;
+        public POINT ptMinPosition;
+        public POINT ptMaxPosition;
+        public RECT rcNormalPosition;
+
+        public static WINDOWPLACEMENT Create() => new() { length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+    }
+
+    [DllImport("user32.dll")] public static extern bool GetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT placement);
+    [DllImport("user32.dll")] public static extern bool SetWindowPlacement(IntPtr hWnd, ref WINDOWPLACEMENT placement);
+    public const int SW_SHOWNOACTIVATE = 4;
 }

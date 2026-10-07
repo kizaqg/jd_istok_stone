@@ -30,10 +30,12 @@ internal static class InputSender
             target = child;
         }
         var lParam = (IntPtr)((pt.Y << 16) | (pt.X & 0xFFFF));
+        // «Наведение» отправляем вплотную к нажатию и отпусканию: если пользователь водит мышью
+        // над игрой, его движения меньше вклиниваются между ними и не уводят клик в сторону.
         Native.PostMessage(target, Native.WM_MOUSEMOVE, IntPtr.Zero, lParam);
-        Thread.Sleep(30);
         Native.PostMessage(target, Native.WM_LBUTTONDOWN, (IntPtr)Native.MK_LBUTTON, lParam);
         Thread.Sleep(50);
+        Native.PostMessage(target, Native.WM_MOUSEMOVE, (IntPtr)Native.MK_LBUTTON, lParam);
         Native.PostMessage(target, Native.WM_LBUTTONUP, IntPtr.Zero, lParam);
     }
 

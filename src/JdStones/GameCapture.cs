@@ -32,6 +32,9 @@ internal sealed class WgcGameCapture : IDisposable
 
     public IntPtr WindowHandle => _window.Handle;
 
+    /// <summary>Размер окна изменился — съёмку нужно создать заново.</summary>
+    public bool SizeChanged { get; private set; }
+
     public WgcGameCapture(GameWindow window)
     {
         if (!GraphicsCaptureSession.IsSupported())
@@ -104,12 +107,9 @@ internal sealed class WgcGameCapture : IDisposable
             _last?.Dispose();
             _last = ToBitmap(software, width, height);
 
-            if (size.Width != _poolSize.Width || size.Height != _poolSize.Height)
-            {
-                // Окно игры изменило размер — пересоздаём буферы под новый размер.
-                _poolSize = size;
-                _pool.Recreate(_device, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, size);
-            }
+            // Окно игры изменило размер (или было свёрнуто): буферы под старый размер.
+            // Пересоздавать их на месте нельзя из чужого потока — пусть владелец создаст съёмку заново.
+            if (size.Width != _poolSize.Width || size.Height != _poolSize.Height) SizeChanged = true;
         }
     }
 

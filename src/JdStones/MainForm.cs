@@ -28,7 +28,7 @@ internal sealed class MainForm : Form
     private Rectangle? _warningRegion;
     private Point? _warningClick;
     private CancellationTokenSource? _cts;
-    private WgcGameCapture? _wgc;
+    private BackgroundGame? _bg;
     private GameOverlay? _overlay;
 
     private readonly CheckBox _backgroundMode = new()
@@ -547,10 +547,11 @@ internal sealed class MainForm : Form
         ConfirmMethod[] confirmMethods;
         if (_backgroundMode.Checked)
         {
-            WgcGameCapture wgc;
+            BackgroundGame bg;
             try
             {
-                wgc = BackgroundCapture(window);
+                bg = BackgroundCapture(window);
+                bg.Capture(new Rectangle(0, 0, 1, 1)).Dispose(); // проверяем, что съёмка запускается
             }
             catch (Exception ex)
             {
@@ -559,8 +560,8 @@ internal sealed class MainForm : Form
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return null;
             }
-            capture = wgc.Capture;
-            click = p => InputSender.BackgroundClick(window, p);
+            capture = bg.Capture;
+            click = bg.Click;
             confirmMethods =
             [
                 new("фоновый клик", click),
@@ -595,6 +596,7 @@ internal sealed class MainForm : Form
             WarningRegion = _warningRegion,
             WarningClick = _warningClick,
             ConfirmMethods = confirmMethods,
+            Background = _backgroundMode.Checked,
             PreferredConfirm = _backgroundMode.Checked ? _settings.ConfirmMethod : null,
             IntervalMs = (int)_delay.Value,
             MaxAttempts = (int)_maxAttempts.Value,
@@ -632,6 +634,7 @@ internal sealed class MainForm : Form
                     SystemSounds.Exclamation.Play();
                     _overlay?.SetRunning(false);
                     _overlay?.SetStatus($"НАЙДЕНО ({result.Attempts})");
+                    _bg?.RestorePosition();
                     ShowMain();
                     MessageBox.Show(this,
                         $"{LuckyMessage}\n\nПопыток: {result.Attempts}\n{string.Join("\n", result.LastStats)}" +
@@ -657,6 +660,7 @@ internal sealed class MainForm : Form
         {
             _cts.Dispose();
             _cts = null;
+            _bg?.RestorePosition();
             SetRunning(false);
         }
     }
@@ -690,19 +694,19 @@ internal sealed class MainForm : Form
     private Bitmap CaptureGame(GameWindow window, Rectangle region) =>
         _backgroundMode.Checked ? BackgroundCapture(window).Capture(region) : WindowCapture.Capture(window, region);
 
-    /// <summary>Съёмка окна игры через Windows Graphics Capture (создаётся один раз на окно).</summary>
-    private WgcGameCapture BackgroundCapture(GameWindow window)
+    /// <summary>Фоновая работа с окном игры (создаётся один раз на окно).</summary>
+    private BackgroundGame BackgroundCapture(GameWindow window)
     {
-        if (_wgc != null && _wgc.WindowHandle == window.Handle) return _wgc;
+        if (_bg != null && _bg.Window.Handle == window.Handle) return _bg;
         ResetBackgroundCapture();
-        _wgc = new WgcGameCapture(window);
-        return _wgc;
+        _bg = new BackgroundGame(window, msg => SafeInvoke(() => Log(msg)));
+        return _bg;
     }
 
     private void ResetBackgroundCapture()
     {
-        _wgc?.Dispose();
-        _wgc = null;
+        _bg?.Dispose();
+        _bg = null;
     }
 
     /// <summary>
@@ -731,6 +735,11 @@ internal sealed class MainForm : Form
         try
         {
             var wgc = BackgroundCapture(window);
+            if (Native.IsIconic(window.Handle))
+            {
+                MessageBox.Show(this, "Разверните окно игры для проверки.", "Проверка фонового клика", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
             var matcher = new StatMatcher(StatCatalog.Predefined);
             async Task<string> ReadAsync()
             {

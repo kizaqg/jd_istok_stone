@@ -18,6 +18,8 @@ internal sealed class RollerConfig
     public IReadOnlyList<ConfirmMethod> ConfirmMethods { get; init; } = [];
     /// <summary>Название способа, сработавшего в прошлый раз (из настроек) — пробуется первым.</summary>
     public string? PreferredConfirm { get; init; }
+    /// <summary>Фоновый режим — для подсказок в журнале.</summary>
+    public bool Background { get; init; }
     public int IntervalMs { get; init; }
     public int MaxAttempts { get; init; }
     public required List<ConditionGroup> Groups { get; init; }
@@ -65,6 +67,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
         {
             // Статы, которые на экране до первого клика: новыми считаем только отличающиеся от них.
             var previous = Signature(await ReadStatsAsync(cfg, matcher));
+            var misses = 0;
 
             while (true)
             {
@@ -120,6 +123,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
                 progress?.Invoke(attempts);
                 if (fresh != null)
                 {
+                    misses = 0;
                     stats = fresh;
                     previous = Signature(stats);
                     log($"#{attempts}: {string.Join(" | ", stats)} (статы через {clicked.ElapsedMilliseconds / 1000.0:0.0} с)");
@@ -128,8 +132,12 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
                 }
                 else
                 {
+                    misses++;
                     log($"#{attempts}: статы не обновились за {(cfg.IntervalMs + LateGraceMs) / 1000.0:0.0} с — кликаю снова. " +
                         "Если часто — проверьте область статов или увеличьте интервал.");
+                    if (cfg.Background && misses == 3)
+                        log("   Подсказка: в фоновом режиме клики не доходят, пока курсор двигается над окном игры. " +
+                            "Уберите мышь с окна игры.");
                 }
 
                 var left = cfg.IntervalMs - (int)clicked.ElapsedMilliseconds;
