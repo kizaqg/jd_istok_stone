@@ -6,7 +6,10 @@ namespace JdStones;
 
 internal sealed class RollerConfig
 {
-    public required GameWindow Window { get; init; }
+    /// <summary>Снимок области окна игры (в координатах клиентской части).</summary>
+    public required Func<Rectangle, Bitmap> Capture { get; init; }
+    /// <summary>Клик в точку окна игры (в координатах клиентской части).</summary>
+    public required Action<Point> Click { get; init; }
     public required Rectangle StatsRegion { get; init; }
     public required Point RerollClick { get; init; }
     public Rectangle? WarningRegion { get; init; }
@@ -30,7 +33,7 @@ internal sealed record RollResult(RollOutcome Outcome, int Attempts, IReadOnlyLi
 /// следующий клик ровно через «интервал» после предыдущего (игра не принимает клик,
 /// пока не закончилась загрузка, поэтому кликать сразу после появления статов нельзя).
 /// </summary>
-internal sealed class StoneRoller(OcrService ocr, Action<string> log)
+internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int>? progress = null)
 {
     private const int PollMs = 50;
     private const int WarningCheckEveryMs = 300;
@@ -69,13 +72,14 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                     stats = late;
                     previous = Signature(stats);
                     attempts++;
+                    progress?.Invoke(attempts);
                     log($"#{attempts}: {string.Join(" | ", stats)} (статы появились с опозданием)");
                     if (await MatchingGroupAsync(cfg, matcher, stats) is var lateGroup && lateGroup >= 0)
                         return new RollResult(RollOutcome.Found, attempts, stats, lateGroup);
                     continue;
                 }
 
-                InputSender.LeftClick(cfg.Window.ToScreen(cfg.RerollClick));
+                cfg.Click(cfg.RerollClick);
                 var clicked = Stopwatch.StartNew();
                 var lastWarningCheck = long.MinValue / 2;
                 IReadOnlyList<StatLine>? fresh = null;
@@ -102,6 +106,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                 }
 
                 attempts++;
+                progress?.Invoke(attempts);
                 if (fresh != null)
                 {
                     stats = fresh;
@@ -152,7 +157,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
     private async Task<bool> WarningVisibleAsync(RollerConfig cfg)
     {
         if (cfg.WarningRegion is not { } region || cfg.WarningClick == null) return false;
-        using var shot = WindowCapture.Capture(cfg.Window, region);
+        using var shot = cfg.Capture(region);
         return WarningDetector.IsRareStoneWarning(await ocr.RecognizeTextAsync(shot));
     }
 
@@ -160,7 +165,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
     private async Task<bool> ConfirmRareWarningAsync(RollerConfig cfg)
     {
         if (cfg.WarningRegion is not { } region || cfg.WarningClick is not { } click) return false;
-        using (var shot = WindowCapture.Capture(cfg.Window, region))
+        using (var shot = cfg.Capture(region))
         {
             if (!WarningDetector.IsRareStoneWarning(await ocr.RecognizeTextAsync(shot)))
             {
@@ -173,7 +178,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                 "Окно «Такие камни весьма редки» не закрывается после клика. " +
                 "Заново укажите «Кнопку подтверждения» — точно по кнопке «Да».");
         log("Предупреждение «Такие камни весьма редки» — нажимаю «Да».");
-        InputSender.LeftClick(cfg.Window.ToScreen(click));
+        cfg.Click(click);
         await Task.Delay(300); // даём окну закрыться
         return true;
     }
@@ -202,7 +207,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
     private async Task<IReadOnlyList<StatLine>> ReadStatsAsync(RollerConfig cfg, StatMatcher matcher,
         int scale = OcrService.DefaultScale)
     {
-        using var shot = WindowCapture.Capture(cfg.Window, cfg.StatsRegion);
+        using var shot = cfg.Capture(cfg.StatsRegion);
         return StatParser.Parse(StatParser.GroupIntoRows(await ocr.RecognizeAsync(shot, scale)), matcher);
     }
 }

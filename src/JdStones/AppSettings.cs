@@ -18,6 +18,11 @@ internal sealed class AppSettings
     public int MaxAttempts { get; set; }
     public List<List<ConditionDto>> Groups { get; set; } = [];
 
+    /// <summary>Фоновый режим: съёмка окна под другими окнами и клики без движения мыши.</summary>
+    public bool BackgroundMode { get; set; }
+    public bool OverlayEnabled { get; set; } = true;
+    public int[]? OverlayOffset { get; set; }
+
     /// <summary>Сохранённые наборы фильтров: имя → группы условий.</summary>
     public Dictionary<string, List<List<ConditionDto>>> Presets { get; set; } = [];
 

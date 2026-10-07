@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Media;
 using System.Text;
@@ -27,6 +28,14 @@ internal sealed class MainForm : Form
     private Rectangle? _warningRegion;
     private Point? _warningClick;
     private CancellationTokenSource? _cts;
+    private WgcGameCapture? _wgc;
+    private GameOverlay? _overlay;
+
+    private readonly CheckBox _backgroundMode = new()
+    {
+        Text = "Фоновый режим (игра может быть под другими окнами, мышь не трогается)", AutoSize = true, Anchor = AnchorStyles.Left,
+    };
+    private readonly CheckBox _overlayEnabled = new() { Text = "Панель поверх игры", AutoSize = true, Anchor = AnchorStyles.Left };
 
     private readonly Label _windowLabel = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly Label _statsLabel = StatusLabel();
@@ -64,10 +73,22 @@ internal sealed class MainForm : Form
         _delay.Value = Math.Clamp(_settings.ClickIntervalMs, (int)_delay.Minimum, (int)_delay.Maximum);
         _maxAttempts.Value = Math.Clamp(_settings.MaxAttempts, 0, (int)_maxAttempts.Maximum);
         _window = GameWindow.Find(_settings.WindowProcess, _settings.WindowTitle);
+        _backgroundMode.Checked = _settings.BackgroundMode;
+        _overlayEnabled.Checked = _settings.OverlayEnabled;
 
         BuildLayout();
         RefreshSetupLabels();
         RebuildGroups();
+        _backgroundMode.CheckedChanged += (_, _) =>
+        {
+            ResetBackgroundCapture();
+            SaveSettings();
+            Log(_backgroundMode.Checked
+                ? "Фоновый режим включён: окно игры можно закрыть другими окнами (но не сворачивать)."
+                : "Фоновый режим выключен: игра должна быть видна, клики двигают курсор.");
+        };
+        _overlayEnabled.CheckedChanged += (_, _) => { UpdateOverlay(); SaveSettings(); };
+        UpdateOverlay();
 
         Log(_ocr == null
             ? "ВНИМАНИЕ: нет русского OCR в Windows. Нажмите «Проверить распознавание» для инструкции."
@@ -125,6 +146,11 @@ internal sealed class MainForm : Form
             AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = Color.DimGray,
             Text = "необязательно: обе настройки или ни одной",
         }, 3, 4);
+
+        setup.Controls.Add(_backgroundMode, 0, 5);
+        setup.SetColumnSpan(_backgroundMode, 2);
+        setup.Controls.Add(MakeButton("Проверить фоновый клик", TestBackgroundClick), 2, 5);
+        setup.Controls.Add(_overlayEnabled, 3, 5);
 
         var filtersHeader = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8, 4, 8, 0) };
         filtersHeader.Controls.Add(new Label { Text = "Фильтры для поиска", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 6, 12, 0) });
@@ -283,6 +309,8 @@ internal sealed class MainForm : Form
         foreach (var name in _settings.Presets.Keys.OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase))
             _presetBox.Items.Add(name);
         if (select != null) _presetBox.SelectedItem = select;
+        _overlay?.SetPresets(_presetBox.Items.Cast<string>());
+        _overlay?.SelectPreset(select);
     }
 
     private void LoadPreset()
@@ -383,11 +411,16 @@ internal sealed class MainForm : Form
         if (_cts != null || RequireWindow() is not { } window) return null;
 
         Hide();
+        if (_overlay != null)
+        {
+            _overlay.Suspended = true;
+            _overlay.Hide();
+        }
         try
         {
             Application.DoEvents();
             Thread.Sleep(200);
-            using var shot = WindowCapture.CaptureClient(window);
+            using var shot = CaptureGame(window, new Rectangle(Point.Empty, window.ClientScreenRect().Size));
             using var picker = new RegionPickerForm(shot, window.ClientScreenRect(), pickPoint, hint);
             if (picker.ShowDialog() != DialogResult.OK) return null;
             return (picker.SelectedRegion, picker.SelectedPoint);
@@ -399,6 +432,7 @@ internal sealed class MainForm : Form
         }
         finally
         {
+            if (_overlay != null) _overlay.Suspended = false;
             Show();
             Activate();
         }
@@ -423,7 +457,7 @@ internal sealed class MainForm : Form
         CommitPendingEdits();
         try
         {
-            var shot = WindowCapture.Capture(window, region);
+            var shot = CaptureGame(window, region);
             var rows = StatParser.GroupIntoRows(await _ocr.RecognizeAsync(shot));
             var conditions = _groups.SelectMany(g => g.Conditions).ToList();
             var matcher = new StatMatcher(StatCatalog.Predefined.Concat(conditions.Select(c => c.Stat)));
@@ -440,7 +474,7 @@ internal sealed class MainForm : Form
 
             if (_warningRegion is { } warnRegion)
             {
-                using var warnShot = WindowCapture.Capture(window, warnRegion);
+                using var warnShot = CaptureGame(window, warnRegion);
                 var warnText = await _ocr.RecognizeTextAsync(warnShot);
                 report.AppendLine().AppendLine("Область предупреждения: " +
                     (WarningDetector.IsRareStoneWarning(warnText) ? "ПРЕДУПРЕЖДЕНИЕ ВИДНО" : "предупреждения нет"));
@@ -508,9 +542,35 @@ internal sealed class MainForm : Form
         }
         if (RequireWindow() is not { } window) return null;
 
+        Func<Rectangle, Bitmap> capture;
+        Action<Point> click;
+        if (_backgroundMode.Checked)
+        {
+            WgcGameCapture wgc;
+            try
+            {
+                wgc = BackgroundCapture(window);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Фоновая съёмка окна не запустилась:\n" + ex.Message +
+                    "\n\nВыключите «Фоновый режим», чтобы работать как раньше.", "Фоновый режим",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return null;
+            }
+            capture = wgc.Capture;
+            click = p => InputSender.BackgroundClick(window, p);
+        }
+        else
+        {
+            capture = r => WindowCapture.Capture(window, r);
+            click = p => InputSender.LeftClick(window.ToScreen(p));
+        }
+
         return new RollerConfig
         {
-            Window = window,
+            Capture = capture,
+            Click = click,
             StatsRegion = _statsRegion!.Value,
             RerollClick = _rerollClick!.Value,
             WarningRegion = _warningRegion,
@@ -530,7 +590,8 @@ internal sealed class MainForm : Form
         _cts = new CancellationTokenSource();
         SetRunning(true);
         Log("Запуск. Остановить — F6.");
-        var roller = new StoneRoller(_ocr!, msg => SafeInvoke(() => Log(msg)));
+        var roller = new StoneRoller(_ocr!, msg => SafeInvoke(() => Log(msg)),
+            n => SafeInvoke(() => _overlay?.SetStatus($"Попытка {n}")));
         var token = _cts.Token;
         try
         {
@@ -543,7 +604,9 @@ internal sealed class MainForm : Form
                         $"{DescribeCondition(c)}: найдено {ConditionEvaluator.CountMatching(c, result.LastStats)}"));
                     Log($"НАЙДЕНО за {result.Attempts} попыток (группа {result.MatchedGroup + 1}): {string.Join(" | ", result.LastStats)}");
                     SystemSounds.Exclamation.Play();
-                    Activate();
+                    _overlay?.SetRunning(false);
+                    _overlay?.SetStatus($"НАЙДЕНО ({result.Attempts})");
+                    ShowMain();
                     MessageBox.Show(this,
                         $"{LuckyMessage}\n\nПопыток: {result.Attempts}\n{string.Join("\n", result.LastStats)}" +
                         $"\n\nСработала группа {result.MatchedGroup + 1}:\n{why}" +
@@ -585,6 +648,144 @@ internal sealed class MainForm : Form
         _stopButton.Enabled = running;
         _statusLabel.Text = running ? "Работает…" : "Остановлено";
         _statusLabel.ForeColor = running ? Color.DarkGreen : SystemColors.ControlText;
+        _backgroundMode.Enabled = !running;
+        _overlay?.SetRunning(running);
+    }
+
+    private void ShowMain()
+    {
+        if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+        Show();
+        Activate();
+    }
+
+    // ---------- Фоновый режим ----------
+
+    private Bitmap CaptureGame(GameWindow window, Rectangle region) =>
+        _backgroundMode.Checked ? BackgroundCapture(window).Capture(region) : WindowCapture.Capture(window, region);
+
+    /// <summary>Съёмка окна игры через Windows Graphics Capture (создаётся один раз на окно).</summary>
+    private WgcGameCapture BackgroundCapture(GameWindow window)
+    {
+        if (_wgc != null && _wgc.WindowHandle == window.Handle) return _wgc;
+        ResetBackgroundCapture();
+        _wgc = new WgcGameCapture(window);
+        return _wgc;
+    }
+
+    private void ResetBackgroundCapture()
+    {
+        _wgc?.Dispose();
+        _wgc = null;
+    }
+
+    /// <summary>
+    /// Одна перековка фоновым кликом: курсор не двигается, игра не активируется.
+    /// Если после этого статы поменялись — игра принимает фоновые клики.
+    /// </summary>
+    private async void TestBackgroundClick()
+    {
+        if (_ocr == null)
+        {
+            MessageBox.Show(this, OcrService.MissingLanguageHelp, "Нет русского OCR", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (_cts != null || RequireWindow() is not { } window) return;
+        if (_statsRegion is not { } region || _rerollClick is not { } point)
+        {
+            MessageBox.Show(this, "Сначала выберите область статов и кнопку перековки.", "Проверка", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        if (MessageBox.Show(this,
+                "Программа сделает ОДНУ перековку фоновым кликом: курсор не сдвинется, игра не станет активной.\n" +
+                "Затем проверит, обновились ли статы.\n\nОкно игры не сворачивайте. Продолжить?",
+                "Проверка фонового клика", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+            return;
+
+        try
+        {
+            var wgc = BackgroundCapture(window);
+            var matcher = new StatMatcher(StatCatalog.Predefined);
+            async Task<string> ReadAsync()
+            {
+                using var shot = wgc.Capture(region);
+                var lines = StatParser.Parse(StatParser.GroupIntoRows(await _ocr.RecognizeAsync(shot)), matcher);
+                return string.Join(" | ", lines);
+            }
+
+            var before = await ReadAsync();
+            if (before.Length == 0)
+            {
+                MessageBox.Show(this, "Фоновая съёмка не видит статы. Откройте окно камня в игре и проверьте область статов.",
+                    "Проверка фонового клика", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            Log("Проверка фонового клика: статы до клика — " + before);
+            await Task.Run(() => InputSender.BackgroundClick(window, point));
+
+            var after = before;
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 6000 && (after == before || after.Length == 0))
+            {
+                await Task.Delay(200);
+                after = await ReadAsync();
+            }
+
+            if (after != before && after.Length > 0)
+            {
+                Log("Фоновый клик работает. Статы после клика — " + after);
+                MessageBox.Show(this, "Фоновый клик РАБОТАЕТ — статы обновились.\n\nВключите галочку «Фоновый режим».",
+                    "Проверка фонового клика", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                Log("Фоновый клик: статы не изменились за 6 с.");
+                MessageBox.Show(this,
+                    "Статы не изменились за 6 секунд — игра, похоже, не принимает фоновые клики.\n\n" +
+                    "Если в игре появилось окно «Такие камни весьма редки» — закройте его и повторите проверку.\n" +
+                    "Иначе оставьте «Фоновый режим» выключенным и напишите разработчику.",
+                    "Проверка фонового клика", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(this, ex.Message, "Ошибка", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
+    }
+
+    // ---------- Панель поверх игры ----------
+
+    private void UpdateOverlay()
+    {
+        if (!_overlayEnabled.Checked)
+        {
+            _overlay?.Dispose();
+            _overlay = null;
+            return;
+        }
+        if (_overlay != null) return;
+
+        _overlay = new GameOverlay(() => _window, AppSettings.ToPoint(_settings.OverlayOffset));
+        _overlay.RunClicked += () =>
+        {
+            if (_cts != null) StopRolling();
+            else StartRolling();
+        };
+        _overlay.ShowMainClicked += ShowMain;
+        _overlay.PresetChosen += name =>
+        {
+            _presetBox.SelectedItem = name;
+            LoadPreset();
+        };
+        _overlay.OffsetChanged += () =>
+        {
+            _settings.OverlayOffset = AppSettings.FromPoint(_overlay?.Offset);
+            _settings.Save();
+        };
+        _overlay.SetPresets(_settings.Presets.Keys.OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase));
+        _overlay.SelectPreset(_presetBox.SelectedItem as string);
+        _overlay.SetRunning(_cts != null);
+        _overlay.Start();
     }
 
     // ---------- Горячие клавиши F5 / F6 (работают и когда активна игра) ----------
@@ -664,6 +865,8 @@ internal sealed class MainForm : Form
         _settings.ClickIntervalMs = (int)_delay.Value;
         _settings.MaxAttempts = (int)_maxAttempts.Value;
         _settings.Groups = TemplateSerializer.ToDto(_groups);
+        _settings.BackgroundMode = _backgroundMode.Checked;
+        _settings.OverlayEnabled = _overlayEnabled.Checked;
         _settings.Save();
     }
 
@@ -671,6 +874,8 @@ internal sealed class MainForm : Form
     {
         _cts?.Cancel();
         SaveSettings();
+        _overlay?.Dispose();
+        ResetBackgroundCapture();
         base.OnFormClosing(e);
     }
 
