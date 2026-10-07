@@ -25,6 +25,10 @@ internal sealed class RollerConfig
     /// фоновые клики сбиваются (игра берёт настоящее положение курсора) и курсор в игре мерцает.
     /// </summary>
     public Func<bool>? IsCursorOverGame { get; init; }
+    /// <summary>
+    /// Обычный режим: точка клика закрыта другим окном (клик настоящей мышью попал бы в него).
+    /// </summary>
+    public Func<Point, bool>? IsPointCovered { get; init; }
     /// <summary>Фоновый режим: сколько мс картинка игры не обновлялась — для диагностики.</summary>
     public Func<long>? FrameAgeMs { get; init; }
     public int IntervalMs { get; init; }
@@ -102,7 +106,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
                     continue;
                 }
 
-                await WaitForCursorAwayAsync(cfg);
+                await WaitUntilClickableAsync(cfg, cfg.RerollClick);
                 cfg.Click(cfg.RerollClick);
                 var clicked = Stopwatch.StartNew();
                 var lastWarningCheck = long.MinValue / 2;
@@ -163,7 +167,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
                         var method = _workingMethod ?? cfg.ConfirmMethods.FirstOrDefault();
                         if (method != null)
                         {
-                            await WaitForCursorAwayAsync(cfg);
+                            await WaitUntilClickableAsync(cfg, blindClick);
                             log($"   Статы не обновились — на случай невидимого окна предупреждения нажимаю «Да» ({method.Name}).");
                             method.Click(blindClick);
                             await Task.Delay(300, ct);
@@ -181,13 +185,26 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
         }
     }
 
-    /// <summary>Пока курсор над окном игры — не кликаем (иначе клик уйдёт мимо, а курсор в игре мерцает).</summary>
-    private async Task WaitForCursorAwayAsync(RollerConfig cfg)
+    /// <summary>
+    /// Не кликаем, пока клик не может дойти правильно: в фоновом режиме — пока курсор над окном игры
+    /// (клик уйдёт мимо, курсор в игре мерцает); в обычном — пока точку клика закрывает другое окно
+    /// (настоящий клик мышью попал бы в него, например в браузер).
+    /// </summary>
+    private async Task WaitUntilClickableAsync(RollerConfig cfg, Point point)
     {
-        if (cfg.IsCursorOverGame == null || !cfg.IsCursorOverGame()) return;
-        log("Курсор над окном игры — жду, пока уберёте мышь (иначе фоновые клики сбиваются).");
-        while (cfg.IsCursorOverGame()) await Task.Delay(200, _ct);
-        log("Курсор ушёл с окна игры — продолжаю.");
+        if (cfg.IsCursorOverGame?.Invoke() == true)
+        {
+            log("Курсор над окном игры — жду, пока уберёте мышь (иначе фоновые клики сбиваются).");
+            while (cfg.IsCursorOverGame()) await Task.Delay(200, _ct);
+            log("Курсор ушёл с окна игры — продолжаю.");
+        }
+        if (cfg.IsPointCovered?.Invoke(point) == true)
+        {
+            log("Кнопку в игре закрывает другое окно — жду. Обычный режим кликает настоящей мышью по экрану; " +
+                "чтобы работать под другими окнами, включите «Фоновый режим».");
+            while (cfg.IsPointCovered(point)) await Task.Delay(300, _ct);
+            log("Кнопка снова видна — продолжаю.");
+        }
     }
 
     private static string Signature(IReadOnlyList<StatLine> stats) => string.Join("\n", stats);
@@ -254,7 +271,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
             : methods[attempt / ConfirmTriesPerMethod % methods.Count];
         _pendingMethod = method;
         log($"Предупреждение «Такие камни весьма редки» — нажимаю «Да» ({method.Name}).");
-        await WaitForCursorAwayAsync(cfg);
+        await WaitUntilClickableAsync(cfg, click);
         method.Click(click);
         await Task.Delay(300); // даём окну закрыться
         return true;

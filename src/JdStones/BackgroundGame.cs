@@ -19,13 +19,16 @@ internal sealed class BackgroundGame(GameWindow window, Action<string> log) : ID
 
     public GameWindow Window => window;
 
+    /// <summary>Разворачивать свёрнутую игру за краем экрана (только в фоновом режиме).</summary>
+    public bool AutoUnminimize { get; set; } = true;
+
     public bool IsHidden => _savedPlacement != null;
 
     public Bitmap Capture(Rectangle clientRegion)
     {
         lock (_lock)
         {
-            KeepRenderable();
+            if (AutoUnminimize) KeepRenderable();
             for (var attempt = 0; ; attempt++)
             {
                 try

@@ -464,6 +464,8 @@ internal sealed class MainForm : Form
             var lines = StatParser.Parse(rows, matcher);
 
             var report = new StringBuilder();
+            report.AppendLine($"Режим: {(_backgroundMode.Checked ? "фоновый" : "обычный")}. Картинка снята {_captureSource}.");
+            report.AppendLine();
             report.AppendLine("Распознанный текст:");
             foreach (var row in rows) report.AppendLine("  " + row);
             report.AppendLine().AppendLine($"Найдено статов: {lines.Count}");
@@ -582,7 +584,10 @@ internal sealed class MainForm : Form
         }
         else
         {
-            capture = r => WindowCapture.Capture(window, r);
+            // Картинку и в обычном режиме берём из окна игры (перекрывающие окна не мешают),
+            // а кликаем настоящей мышью — только когда точка клика не закрыта другим окном.
+            CaptureGame(window, new Rectangle(0, 0, 1, 1), false).Dispose(); // съёмка создаётся здесь, в основном потоке
+            capture = r => CaptureGame(window, r, false);
             click = p => InputSender.LeftClick(window.ToScreen(p));
             confirmMethods = [new("клик", click)];
         }
@@ -598,6 +603,7 @@ internal sealed class MainForm : Form
             ConfirmMethods = confirmMethods,
             Background = _backgroundMode.Checked,
             IsCursorOverGame = _backgroundMode.Checked ? _bg!.IsCursorOverGame : null,
+            IsPointCovered = _backgroundMode.Checked ? null : p => !IsGameAt(window, window.ToScreen(p)),
             FrameAgeMs = _backgroundMode.Checked ? () => _bg?.FrameAgeMs ?? -1 : null,
             PreferredConfirm = _backgroundMode.Checked ? _settings.ConfirmMethod : null,
             IntervalMs = (int)_delay.Value,
@@ -693,8 +699,37 @@ internal sealed class MainForm : Form
 
     // ---------- Фоновый режим ----------
 
-    private Bitmap CaptureGame(GameWindow window, Rectangle region) =>
-        _backgroundMode.Checked ? BackgroundCapture(window).Capture(region) : WindowCapture.Capture(window, region);
+    private volatile string _captureSource = "";
+
+    /// <summary>
+    /// Картинка области окна игры. Всегда из самого окна (Windows Graphics Capture) — окна поверх
+    /// игры не попадают в распознавание. Съёмка с экрана — только если Windows её не поддерживает.
+    /// </summary>
+    private Bitmap CaptureGame(GameWindow window, Rectangle region) => CaptureGame(window, region, _backgroundMode.Checked);
+
+    private Bitmap CaptureGame(GameWindow window, Rectangle region, bool background)
+    {
+        try
+        {
+            var bg = BackgroundCapture(window);
+            bg.AutoUnminimize = background;
+            var bmp = bg.Capture(region);
+            _captureSource = "из окна игры (окна поверх игры не мешают)";
+            return bmp;
+        }
+        catch (Exception ex) when (ex is not InvalidOperationException)
+        {
+            _captureSource = "с экрана (съёмка окна недоступна: " + ex.Message + ") — окна поверх игры попадут в картинку";
+            return WindowCapture.Capture(window, region);
+        }
+    }
+
+    /// <summary>В этой точке экрана видно окно игры (а не другое окно поверх неё).</summary>
+    private static bool IsGameAt(GameWindow window, Point screen)
+    {
+        var hit = Native.WindowFromPoint(new Native.POINT { X = screen.X, Y = screen.Y });
+        return hit != IntPtr.Zero && Native.GetAncestor(hit, Native.GA_ROOT) == window.Handle;
+    }
 
     /// <summary>Фоновая работа с окном игры (создаётся один раз на окно).</summary>
     private BackgroundGame BackgroundCapture(GameWindow window)
