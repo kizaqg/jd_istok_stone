@@ -25,6 +25,8 @@ internal sealed class RollerConfig
     /// фоновые клики сбиваются (игра берёт настоящее положение курсора) и курсор в игре мерцает.
     /// </summary>
     public Func<bool>? IsCursorOverGame { get; init; }
+    /// <summary>Фоновый режим: сколько мс картинка игры не обновлялась — для диагностики.</summary>
+    public Func<long>? FrameAgeMs { get; init; }
     public int IntervalMs { get; init; }
     public int MaxAttempts { get; init; }
     public required List<ConditionGroup> Groups { get; init; }
@@ -148,7 +150,24 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
                         // Для разбора: что видно в области предупреждения, когда перековка «встала».
                         using var shot = cfg.Capture(warnRegion);
                         var text = (await ocr.RecognizeTextAsync(shot)).Replace("\n", " / ");
-                        log($"   Диагностика: в области предупреждения — «{(text.Length > 0 ? text : "пусто")}».");
+                        var age = cfg.FrameAgeMs?.Invoke() ?? -1;
+                        log($"   Диагностика: в области предупреждения — «{(text.Length > 0 ? text : "пусто")}»" +
+                            (age >= 0 ? $", картинка игры не обновлялась {age / 1000.0:0.0} с." : "."));
+                    }
+
+                    // Окно «Такие камни весьма редки» могло появиться, но программа его не увидела
+                    // (игра, закрытая другим окном, может не перерисовываться). Нажимаем «Да» вслепую:
+                    // если окна нет, клик придётся в пустое место окна камня.
+                    if (cfg.Background && cfg.WarningClick is { } blindClick)
+                    {
+                        var method = _workingMethod ?? cfg.ConfirmMethods.FirstOrDefault();
+                        if (method != null)
+                        {
+                            await WaitForCursorAwayAsync(cfg);
+                            log($"   Статы не обновились — на случай невидимого окна предупреждения нажимаю «Да» ({method.Name}).");
+                            method.Click(blindClick);
+                            await Task.Delay(300, ct);
+                        }
                     }
                 }
 

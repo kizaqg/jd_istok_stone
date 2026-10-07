@@ -377,7 +377,7 @@ internal sealed class MainForm : Form
 
     private void PickStatsRegion()
     {
-        if (PickOnGame(false, "Выделите мышью строки статов: названия и значения (колонку «Текущие»)") is { } r)
+        if (PickOnGame(false, "Выделите строки статов ВМЕСТЕ с колонкой «Развитие» (по ней надёжнее видны проценты)") is { } r)
             _statsRegion = r.Region;
         AfterPick();
     }
@@ -598,6 +598,7 @@ internal sealed class MainForm : Form
             ConfirmMethods = confirmMethods,
             Background = _backgroundMode.Checked,
             IsCursorOverGame = _backgroundMode.Checked ? _bg!.IsCursorOverGame : null,
+            FrameAgeMs = _backgroundMode.Checked ? () => _bg?.FrameAgeMs ?? -1 : null,
             PreferredConfirm = _backgroundMode.Checked ? _settings.ConfirmMethod : null,
             IntervalMs = (int)_delay.Value,
             MaxAttempts = (int)_maxAttempts.Value,

@@ -51,6 +51,15 @@ internal sealed class BackgroundGame(GameWindow window, Action<string> log) : ID
 
     public void Click(Point client) => InputSender.BackgroundClick(window, client);
 
+    /// <summary>Сколько миллисекунд картинка игры не обновлялась (-1 — неизвестно).</summary>
+    public long FrameAgeMs
+    {
+        get
+        {
+            lock (_lock) return _capture?.FrameAgeMs ?? -1;
+        }
+    }
+
     /// <summary>Настоящий курсор сейчас над видимой частью окна игры (не над окном поверх неё).</summary>
     public bool IsCursorOverGame()
     {

@@ -83,6 +83,25 @@ public class ParserTests
         Assert.Empty(StatParser.Parse([row], Matcher));
     }
 
+    [Theory]
+    // «%» потерян у значения, но есть в колонке «Развитие».
+    [InlineData("Снижен. урона 0.121 0.121%/0.886%", true)]
+    [InlineData("Сопр. Феору 1560 0.156%/0.630%", true)]
+    // «%» прочитан как «0», а «0.» потерян: 0.054% → 540.
+    [InlineData("Снижен. урона 540", true)]
+    // Без «%» и без «Развития»: меньше 1 — процент, 1..30 — число.
+    [InlineData("Снижен. урона 0.089", true)]
+    [InlineData("Снижен. урона 5.98", false)]
+    [InlineData("Снижен. урона 2.47 2.47/27.40", false)]
+    // Максимум «Развития» выдаёт процент, даже если значение распозналось числом.
+    [InlineData("Снижен. урона 12 0.12/0.886", true)]
+    // Числовой стат остаётся числом.
+    [InlineData("Здоровье 86.80 86.80/588.00", false)]
+    public void DetectsPercentEvenWhenOcrLosesTheSign(string row, bool percent)
+    {
+        Assert.Equal(percent, Assert.Single(StatParser.Parse([row], Matcher)).IsPercent);
+    }
+
     [Fact]
     public void SkipsRowsWithoutKnownStat()
     {

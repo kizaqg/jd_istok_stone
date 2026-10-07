@@ -32,6 +32,10 @@ internal sealed class WgcGameCapture : IDisposable
 
     public IntPtr WindowHandle => _window.Handle;
 
+    /// <summary>Сколько миллисекунд назад игра последний раз прислала новый кадр.</summary>
+    public long FrameAgeMs => _lastFrameTick == 0 ? -1 : Environment.TickCount64 - _lastFrameTick;
+    private long _lastFrameTick;
+
     /// <summary>Размер окна изменился — съёмку нужно создать заново.</summary>
     public bool SizeChanged { get; private set; }
 
@@ -93,6 +97,7 @@ internal sealed class WgcGameCapture : IDisposable
             Thread.Sleep(15);
         }
         if (latest == null) return;
+        _lastFrameTick = Environment.TickCount64;
 
         using (latest)
         {

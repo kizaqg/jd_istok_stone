@@ -35,4 +35,17 @@ public static class StatCatalog
         "Увел. здоровья",
         "Усил. защиты",
     ];
+
+    /// <summary>Статы, которые бывают и в процентах, и числом (тип определяется по строке).</summary>
+    public static readonly IReadOnlySet<string> BothUnits = new HashSet<string> { "Снижен. урона" };
+
+    /// <summary>
+    /// Для статов «и %, и число»: проценты всегда меньше этого (0.048–0.886%), числа — больше
+    /// (1.5–27.4). Всё, что OCR прочитал больше <see cref="GarbledPercentAbove"/>, — испорченный процент
+    /// («0.108%» → «1080»: потерян «0.», а «%» прочитан как «0»).
+    /// </summary>
+    public const double PercentBelow = 1.0;
+    public const double GarbledPercentAbove = 30.0;
+    /// <summary>Максимум в колонке «Развитие» («/0.886» у процента, «/27.40» у числа).</summary>
+    public const double PercentMaxBelow = 5.0;
 }
