@@ -20,6 +20,11 @@ internal sealed class RollerConfig
     public string? PreferredConfirm { get; init; }
     /// <summary>Фоновый режим — для подсказок в журнале.</summary>
     public bool Background { get; init; }
+    /// <summary>
+    /// Фоновый режим: true, пока настоящий курсор над видимой частью окна игры. В это время
+    /// фоновые клики сбиваются (игра берёт настоящее положение курсора) и курсор в игре мерцает.
+    /// </summary>
+    public Func<bool>? IsCursorOverGame { get; init; }
     public int IntervalMs { get; init; }
     public int MaxAttempts { get; init; }
     public required List<ConditionGroup> Groups { get; init; }
@@ -49,6 +54,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
     // Если за интервал статы не пришли — ждём ещё столько, прежде чем кликать снова.
     private const int LateGraceMs = 300;
     private int _confirmsInRow;
+    private CancellationToken _ct;
     private ConfirmMethod? _pendingMethod;
     private ConfirmMethod? _workingMethod;
 
@@ -57,6 +63,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
 
     public async Task<RollResult> RunAsync(RollerConfig cfg, CancellationToken ct)
     {
+        _ct = ct;
         var customStats = cfg.Groups.SelectMany(g => g.Conditions).Select(c => c.Stat);
         var matcher = new StatMatcher(StatCatalog.Predefined.Concat(customStats));
 
@@ -93,6 +100,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
                     continue;
                 }
 
+                await WaitForCursorAwayAsync(cfg);
                 cfg.Click(cfg.RerollClick);
                 var clicked = Stopwatch.StartNew();
                 var lastWarningCheck = long.MinValue / 2;
@@ -135,9 +143,13 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
                     misses++;
                     log($"#{attempts}: статы не обновились за {(cfg.IntervalMs + LateGraceMs) / 1000.0:0.0} с — кликаю снова. " +
                         "Если часто — проверьте область статов или увеличьте интервал.");
-                    if (cfg.Background && misses == 3)
-                        log("   Подсказка: в фоновом режиме клики не доходят, пока курсор двигается над окном игры. " +
-                            "Уберите мышь с окна игры.");
+                    if (misses == 3 && cfg.WarningRegion is { } warnRegion)
+                    {
+                        // Для разбора: что видно в области предупреждения, когда перековка «встала».
+                        using var shot = cfg.Capture(warnRegion);
+                        var text = (await ocr.RecognizeTextAsync(shot)).Replace("\n", " / ");
+                        log($"   Диагностика: в области предупреждения — «{(text.Length > 0 ? text : "пусто")}».");
+                    }
                 }
 
                 var left = cfg.IntervalMs - (int)clicked.ElapsedMilliseconds;
@@ -148,6 +160,15 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
         {
             return new RollResult(RollOutcome.Stopped, attempts, stats);
         }
+    }
+
+    /// <summary>Пока курсор над окном игры — не кликаем (иначе клик уйдёт мимо, а курсор в игре мерцает).</summary>
+    private async Task WaitForCursorAwayAsync(RollerConfig cfg)
+    {
+        if (cfg.IsCursorOverGame == null || !cfg.IsCursorOverGame()) return;
+        log("Курсор над окном игры — жду, пока уберёте мышь (иначе фоновые клики сбиваются).");
+        while (cfg.IsCursorOverGame()) await Task.Delay(200, _ct);
+        log("Курсор ушёл с окна игры — продолжаю.");
     }
 
     private static string Signature(IReadOnlyList<StatLine> stats) => string.Join("\n", stats);
@@ -214,6 +235,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
             : methods[attempt / ConfirmTriesPerMethod % methods.Count];
         _pendingMethod = method;
         log($"Предупреждение «Такие камни весьма редки» — нажимаю «Да» ({method.Name}).");
+        await WaitForCursorAwayAsync(cfg);
         method.Click(click);
         await Task.Delay(300); // даём окну закрыться
         return true;

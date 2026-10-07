@@ -35,7 +35,6 @@ internal static class InputSender
         Native.PostMessage(target, Native.WM_MOUSEMOVE, IntPtr.Zero, lParam);
         Native.PostMessage(target, Native.WM_LBUTTONDOWN, (IntPtr)Native.MK_LBUTTON, lParam);
         Thread.Sleep(50);
-        Native.PostMessage(target, Native.WM_MOUSEMOVE, (IntPtr)Native.MK_LBUTTON, lParam);
         Native.PostMessage(target, Native.WM_LBUTTONUP, IntPtr.Zero, lParam);
     }
 

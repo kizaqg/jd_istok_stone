@@ -51,6 +51,14 @@ internal sealed class BackgroundGame(GameWindow window, Action<string> log) : ID
 
     public void Click(Point client) => InputSender.BackgroundClick(window, client);
 
+    /// <summary>Настоящий курсор сейчас над видимой частью окна игры (не над окном поверх неё).</summary>
+    public bool IsCursorOverGame()
+    {
+        if (!window.IsAlive || IsHidden || !Native.GetCursorPos(out var p)) return false;
+        var hit = Native.WindowFromPoint(p);
+        return hit != IntPtr.Zero && Native.GetAncestor(hit, Native.GA_ROOT) == window.Handle;
+    }
+
     /// <summary>Вернуть окно игры на прежнее место, если программа уводила его за экран.</summary>
     public void RestorePosition()
     {

@@ -597,6 +597,7 @@ internal sealed class MainForm : Form
             WarningClick = _warningClick,
             ConfirmMethods = confirmMethods,
             Background = _backgroundMode.Checked,
+            IsCursorOverGame = _backgroundMode.Checked ? _bg!.IsCursorOverGame : null,
             PreferredConfirm = _backgroundMode.Checked ? _settings.ConfirmMethod : null,
             IntervalMs = (int)_delay.Value,
             MaxAttempts = (int)_maxAttempts.Value,
