@@ -544,6 +544,7 @@ internal sealed class MainForm : Form
 
         Func<Rectangle, Bitmap> capture;
         Action<Point> click;
+        ConfirmMethod[] confirmMethods;
         if (_backgroundMode.Checked)
         {
             WgcGameCapture wgc;
@@ -560,11 +561,19 @@ internal sealed class MainForm : Form
             }
             capture = wgc.Capture;
             click = p => InputSender.BackgroundClick(window, p);
+            confirmMethods =
+            [
+                new("фоновый клик", click),
+                new("фоновый клик с наведением", p => InputSender.BackgroundHoverClick(window, p)),
+                new("клавиша Enter", _ => InputSender.BackgroundEnter(window)),
+                new("клик с переключением на игру", p => InputSender.ForegroundClickAndRestore(window, p)),
+            ];
         }
         else
         {
             capture = r => WindowCapture.Capture(window, r);
             click = p => InputSender.LeftClick(window.ToScreen(p));
+            confirmMethods = [new("клик", click)];
         }
 
         return new RollerConfig
@@ -575,6 +584,7 @@ internal sealed class MainForm : Form
             RerollClick = _rerollClick!.Value,
             WarningRegion = _warningRegion,
             WarningClick = _warningClick,
+            ConfirmMethods = confirmMethods,
             IntervalMs = (int)_delay.Value,
             MaxAttempts = (int)_maxAttempts.Value,
             Groups = _groups.Select(g => g.Clone()).ToList(),

@@ -77,4 +77,15 @@ internal static class Native
     public const uint CWP_SKIPINVISIBLE = 0x0001;
     public const uint CWP_SKIPDISABLED = 0x0002;
     public const int GWLP_HWNDPARENT = -8;
+
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT point);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extraInfo);
+    public const uint WM_KEYDOWN = 0x0100;
+    public const uint WM_KEYUP = 0x0101;
+    public const uint WM_CHAR = 0x0102;
+    public const byte VK_RETURN = 0x0D;
+    public const byte VK_MENU = 0x12;
+    public const uint KEYEVENTF_KEYUP = 0x0002;
 }

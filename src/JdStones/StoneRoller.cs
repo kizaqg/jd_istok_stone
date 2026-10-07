@@ -14,10 +14,14 @@ internal sealed class RollerConfig
     public required Point RerollClick { get; init; }
     public Rectangle? WarningRegion { get; init; }
     public Point? WarningClick { get; init; }
+    /// <summary>Способы нажать «Да» в окне предупреждения — пробуются по очереди, удачный запоминается.</summary>
+    public IReadOnlyList<ConfirmMethod> ConfirmMethods { get; init; } = [];
     public int IntervalMs { get; init; }
     public int MaxAttempts { get; init; }
     public required List<ConditionGroup> Groups { get; init; }
 }
+
+internal sealed record ConfirmMethod(string Name, Action<Point> Click);
 
 internal enum RollOutcome
 {
@@ -37,10 +41,12 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
 {
     private const int PollMs = 50;
     private const int WarningCheckEveryMs = 300;
-    private const int MaxConfirmsInRow = 5;
+    private const int ConfirmTriesPerMethod = 2;
     // Если за интервал статы не пришли — ждём ещё столько, прежде чем кликать снова.
     private const int LateGraceMs = 300;
     private int _confirmsInRow;
+    private ConfirmMethod? _pendingMethod;
+    private ConfirmMethod? _workingMethod;
 
     public async Task<RollResult> RunAsync(RollerConfig cfg, CancellationToken ct)
     {
@@ -169,16 +175,32 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
         {
             if (!WarningDetector.IsRareStoneWarning(await ocr.RecognizeTextAsync(shot)))
             {
+                if (_pendingMethod != null && _workingMethod != _pendingMethod)
+                {
+                    // Окно закрылось после этого способа — дальше сразу используем его.
+                    _workingMethod = _pendingMethod;
+                    log($"Окно предупреждения закрывается способом: {_workingMethod.Name}.");
+                }
+                _pendingMethod = null;
                 _confirmsInRow = 0;
                 return false;
             }
         }
-        if (++_confirmsInRow > MaxConfirmsInRow)
+
+        var methods = cfg.ConfirmMethods.Count > 0 ? cfg.ConfirmMethods : [new ConfirmMethod("клик", cfg.Click)];
+        var attempt = _confirmsInRow++;
+        if (attempt >= methods.Count * ConfirmTriesPerMethod)
             throw new InvalidOperationException(
-                "Окно «Такие камни весьма редки» не закрывается после клика. " +
+                "Окно «Такие камни весьма редки» не закрывается ни одним способом. " +
                 "Заново укажите «Кнопку подтверждения» — точно по кнопке «Да».");
-        log("Предупреждение «Такие камни весьма редки» — нажимаю «Да».");
-        cfg.Click(click);
+
+        // Сначала способ, который уже срабатывал; если он перестал — перебираем все по очереди.
+        var method = _workingMethod != null && attempt < ConfirmTriesPerMethod
+            ? _workingMethod
+            : methods[attempt / ConfirmTriesPerMethod % methods.Count];
+        _pendingMethod = method;
+        log($"Предупреждение «Такие камни весьма редки» — нажимаю «Да» ({method.Name}).");
+        method.Click(click);
         await Task.Delay(300); // даём окну закрыться
         return true;
     }
