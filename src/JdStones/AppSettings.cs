@@ -22,6 +22,8 @@ internal sealed class AppSettings
     public bool BackgroundMode { get; set; }
     public bool OverlayEnabled { get; set; } = true;
     public int[]? OverlayOffset { get; set; }
+    /// <summary>Каким способом в фоновом режиме удалось нажать «Да» в окне предупреждения.</summary>
+    public string? ConfirmMethod { get; set; }
 
     /// <summary>Сохранённые наборы фильтров: имя → группы условий.</summary>
     public Dictionary<string, List<List<ConditionDto>>> Presets { get; set; } = [];

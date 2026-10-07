@@ -16,6 +16,8 @@ internal sealed class RollerConfig
     public Point? WarningClick { get; init; }
     /// <summary>Способы нажать «Да» в окне предупреждения — пробуются по очереди, удачный запоминается.</summary>
     public IReadOnlyList<ConfirmMethod> ConfirmMethods { get; init; } = [];
+    /// <summary>Название способа, сработавшего в прошлый раз (из настроек) — пробуется первым.</summary>
+    public string? PreferredConfirm { get; init; }
     public int IntervalMs { get; init; }
     public int MaxAttempts { get; init; }
     public required List<ConditionGroup> Groups { get; init; }
@@ -47,6 +49,9 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
     private int _confirmsInRow;
     private ConfirmMethod? _pendingMethod;
     private ConfirmMethod? _workingMethod;
+
+    /// <summary>Способ, которым удалось закрыть окно предупреждения (чтобы сохранить в настройках).</summary>
+    public string? WorkingConfirmName => _workingMethod?.Name;
 
     public async Task<RollResult> RunAsync(RollerConfig cfg, CancellationToken ct)
     {
@@ -188,6 +193,7 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
         }
 
         var methods = cfg.ConfirmMethods.Count > 0 ? cfg.ConfirmMethods : [new ConfirmMethod("клик", cfg.Click)];
+        _workingMethod ??= methods.FirstOrDefault(m => m.Name == cfg.PreferredConfirm);
         var attempt = _confirmsInRow++;
         if (attempt >= methods.Count * ConfirmTriesPerMethod)
             throw new InvalidOperationException(

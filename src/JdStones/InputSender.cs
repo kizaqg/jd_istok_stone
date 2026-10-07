@@ -64,6 +64,19 @@ internal static class InputSender
     }
 
     /// <summary>
+    /// Сообщает игре «твоё окно активно», не активируя его на самом деле (браузер остаётся сверху,
+    /// фокус и курсор не трогаются). Некоторые игры, считая себя неактивными, игнорируют клики
+    /// по модальным окнам.
+    /// </summary>
+    public static void PretendActive(GameWindow window)
+    {
+        Native.PostMessage(window.Handle, Native.WM_ACTIVATEAPP, (IntPtr)1, IntPtr.Zero);
+        Native.PostMessage(window.Handle, Native.WM_ACTIVATE, (IntPtr)Native.WA_ACTIVE, IntPtr.Zero);
+        Native.PostMessage(window.Handle, Native.WM_SETFOCUS, IntPtr.Zero, IntPtr.Zero);
+        Thread.Sleep(80);
+    }
+
+    /// <summary>
     /// Запасной вариант: на долю секунды выводит игру на передний план, кликает настоящей мышью
     /// и возвращает обратно активное окно и курсор.
     /// </summary>
@@ -75,9 +88,9 @@ internal static class InputSender
         Native.keybd_event(Native.VK_MENU, 0, 0, IntPtr.Zero);
         Native.keybd_event(Native.VK_MENU, 0, Native.KEYEVENTF_KEYUP, IntPtr.Zero);
         Native.SetForegroundWindow(window.Handle);
-        Thread.Sleep(120);
-        LeftClick(window.ToScreen(client));
         Thread.Sleep(80);
+        LeftClick(window.ToScreen(client));
+        Thread.Sleep(40);
         Native.SetCursorPos(cursor.X, cursor.Y);
         if (previous != IntPtr.Zero && previous != window.Handle) Native.SetForegroundWindow(previous);
     }

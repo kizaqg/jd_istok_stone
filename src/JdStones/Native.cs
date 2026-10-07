@@ -88,4 +88,8 @@ internal static class Native
     public const byte VK_RETURN = 0x0D;
     public const byte VK_MENU = 0x12;
     public const uint KEYEVENTF_KEYUP = 0x0002;
+    public const uint WM_ACTIVATE = 0x0006;
+    public const uint WM_SETFOCUS = 0x0007;
+    public const uint WM_ACTIVATEAPP = 0x001C;
+    public const int WA_ACTIVE = 1;
 }

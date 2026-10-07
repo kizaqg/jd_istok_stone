@@ -566,6 +566,16 @@ internal sealed class MainForm : Form
                 new("фоновый клик", click),
                 new("фоновый клик с наведением", p => InputSender.BackgroundHoverClick(window, p)),
                 new("клавиша Enter", _ => InputSender.BackgroundEnter(window)),
+                new("фоновый клик с активацией окна", p =>
+                {
+                    InputSender.PretendActive(window);
+                    InputSender.BackgroundHoverClick(window, p);
+                }),
+                new("Enter с активацией окна", _ =>
+                {
+                    InputSender.PretendActive(window);
+                    InputSender.BackgroundEnter(window);
+                }),
                 new("клик с переключением на игру", p => InputSender.ForegroundClickAndRestore(window, p)),
             ];
         }
@@ -585,6 +595,7 @@ internal sealed class MainForm : Form
             WarningRegion = _warningRegion,
             WarningClick = _warningClick,
             ConfirmMethods = confirmMethods,
+            PreferredConfirm = _backgroundMode.Checked ? _settings.ConfirmMethod : null,
             IntervalMs = (int)_delay.Value,
             MaxAttempts = (int)_maxAttempts.Value,
             Groups = _groups.Select(g => g.Clone()).ToList(),
@@ -606,6 +617,11 @@ internal sealed class MainForm : Form
         try
         {
             var result = await Task.Run(() => roller.RunAsync(cfg, token));
+            if (_backgroundMode.Checked && roller.WorkingConfirmName is { } confirmName && confirmName != _settings.ConfirmMethod)
+            {
+                _settings.ConfirmMethod = confirmName;
+                _settings.Save();
+            }
             switch (result.Outcome)
             {
                 case RollOutcome.Found:
