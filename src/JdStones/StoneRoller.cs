@@ -35,6 +35,8 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
     private const int PollMs = 50;
     private const int WarningCheckEveryMs = 300;
     private const int MaxConfirmsInRow = 5;
+    // Если за интервал статы не пришли — ждём ещё столько, прежде чем кликать снова.
+    private const int LateGraceMs = 300;
     private int _confirmsInRow;
 
     public async Task<RollResult> RunAsync(RollerConfig cfg, CancellationToken ct)
@@ -59,13 +61,27 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                 // Окно «Такие камни весьма редки» перекрывает статы и кнопки: сначала закрываем его.
                 if (await ConfirmRareWarningAsync(cfg)) await Task.Delay(PollMs, ct);
 
+                // Последняя проверка прямо перед кликом (~0.1 с): если загрузка затянулась и новые
+                // статы появились только сейчас, сначала проверяем их. Иначе клик перекрутил бы
+                // подходящий камень, который программа ещё не успела посмотреть.
+                if (await TryReadNewStatsAsync(cfg, matcher, previous) is { } late)
+                {
+                    stats = late;
+                    previous = Signature(stats);
+                    attempts++;
+                    log($"#{attempts}: {string.Join(" | ", stats)} (статы появились с опозданием)");
+                    if (await MatchingGroupAsync(cfg, matcher, stats) is var lateGroup && lateGroup >= 0)
+                        return new RollResult(RollOutcome.Found, attempts, stats, lateGroup);
+                    continue;
+                }
+
                 InputSender.LeftClick(cfg.Window.ToScreen(cfg.RerollClick));
                 var clicked = Stopwatch.StartNew();
                 var lastWarningCheck = long.MinValue / 2;
-                var changed = false;
+                IReadOnlyList<StatLine>? fresh = null;
 
-                // Ждём новые статы, но не дольше интервала.
-                while (clicked.ElapsedMilliseconds < cfg.IntervalMs)
+                // Ждём новые статы до конца интервала (+ чуть-чуть, если загрузка затянулась).
+                while (clicked.ElapsedMilliseconds < cfg.IntervalMs + LateGraceMs)
                 {
                     await Task.Delay(PollMs, ct);
 
@@ -81,40 +97,23 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
                         }
                     }
 
-                    stats = await ReadStatsAsync(cfg, matcher);
-                    var current = Signature(stats);
-                    if (stats.Count > 0 && current != previous)
-                    {
-                        // Перед тем как принять «новые» статы, убеждаемся, что это не окно
-                        // предупреждения их закрыло, и читаем ещё раз: совпало — загрузились полностью.
-                        if (await ConfirmRareWarningAsync(cfg))
-                        {
-                            clicked.Restart();
-                            lastWarningCheck = 0;
-                            continue;
-                        }
-                        if (Signature(await ReadStatsAsync(cfg, matcher)) == current)
-                        {
-                            changed = true;
-                            break;
-                        }
-                    }
+                    fresh = await TryReadNewStatsAsync(cfg, matcher, previous);
+                    if (fresh != null) break;
                 }
 
                 attempts++;
-                if (changed)
+                if (fresh != null)
                 {
+                    stats = fresh;
                     previous = Signature(stats);
                     log($"#{attempts}: {string.Join(" | ", stats)} (статы через {clicked.ElapsedMilliseconds / 1000.0:0.0} с)");
-                    var matched = ConditionEvaluator.MatchingGroupIndex(cfg.Groups, stats);
-                    if (matched >= 0 && await ConfirmMatchAsync(cfg, matcher))
-                        return new RollResult(RollOutcome.Found, attempts, stats, matched);
+                    if (await MatchingGroupAsync(cfg, matcher, stats) is var group && group >= 0)
+                        return new RollResult(RollOutcome.Found, attempts, stats, group);
                 }
                 else
                 {
-                    log(stats.Count == 0
-                        ? $"#{attempts}: статы не распознаны. Проверьте область кнопкой «Проверить распознавание»."
-                        : $"#{attempts}: статы не обновились за {cfg.IntervalMs / 1000.0:0.0} с — кликаю снова. Если часто — увеличьте интервал.");
+                    log($"#{attempts}: статы не обновились за {(cfg.IntervalMs + LateGraceMs) / 1000.0:0.0} с — кликаю снова. " +
+                        "Если часто — проверьте область статов или увеличьте интервал.");
                 }
 
                 var left = cfg.IntervalMs - (int)clicked.ElapsedMilliseconds;
@@ -128,6 +127,34 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log)
     }
 
     private static string Signature(IReadOnlyList<StatLine> stats) => string.Join("\n", stats);
+
+    /// <summary>
+    /// Новые (отличные от <paramref name="previous"/>) и уже полностью загруженные статы или null.
+    /// Не принимает статы, если их перекрыло окно предупреждения.
+    /// </summary>
+    private async Task<IReadOnlyList<StatLine>?> TryReadNewStatsAsync(RollerConfig cfg, StatMatcher matcher, string previous)
+    {
+        var stats = await ReadStatsAsync(cfg, matcher);
+        var current = Signature(stats);
+        if (stats.Count == 0 || current == previous) return null;
+        if (await WarningVisibleAsync(cfg)) return null;
+        // Читаем ещё раз: совпало — статы загрузились полностью, а не пойманы «наполовину».
+        return Signature(await ReadStatsAsync(cfg, matcher)) == current ? stats : null;
+    }
+
+    /// <returns>Номер сработавшей группы (после перепроверки) или -1.</returns>
+    private async Task<int> MatchingGroupAsync(RollerConfig cfg, StatMatcher matcher, IReadOnlyList<StatLine> stats)
+    {
+        var group = ConditionEvaluator.MatchingGroupIndex(cfg.Groups, stats);
+        return group >= 0 && await ConfirmMatchAsync(cfg, matcher) ? group : -1;
+    }
+
+    private async Task<bool> WarningVisibleAsync(RollerConfig cfg)
+    {
+        if (cfg.WarningRegion is not { } region || cfg.WarningClick == null) return false;
+        using var shot = WindowCapture.Capture(cfg.Window, region);
+        return WarningDetector.IsRareStoneWarning(await ocr.RecognizeTextAsync(shot));
+    }
 
     /// <returns>true, если предупреждение было и мы его подтвердили.</returns>
     private async Task<bool> ConfirmRareWarningAsync(RollerConfig cfg)
