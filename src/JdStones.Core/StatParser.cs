@@ -65,14 +65,25 @@ public static partial class StatParser
 
     private static bool IsPercent(string stat, string tail, double value)
     {
-        // «%» где угодно правее названия: у значения или в колонке «Развитие» (у числовых статов его нет).
-        if (tail.Contains('%')) return true;
-        if (!StatCatalog.BothUnits.Contains(stat)) return false;
+        if (StatCatalog.Kinds.TryGetValue(stat, out var kind))
+        {
+            switch (kind)
+            {
+                case StatKind.Percent:
+                    return true;
+                case StatKind.Flat:
+                    return false;
+            }
 
-        // «Снижен. урона» без единого «%»: решаем по величине.
-        if (value < StatCatalog.PercentBelow || value > StatCatalog.GarbledPercentAbove) return true;
-        var max = MaxRegex().Match(tail);
-        return max.Success && ParseNumber(max.Groups[1].Value) < StatCatalog.PercentMaxBelow;
+            // «Снижен. урона»: в процентах всегда меньше 1, числом — от 1 до ~27.
+            // Значение больше 30 — испорченный процент («0.054%» → «540»).
+            if (value < StatCatalog.PercentBelow || value > StatCatalog.GarbledPercentAbove) return true;
+            var max = MaxRegex().Match(tail);
+            return max.Success && ParseNumber(max.Groups[1].Value) < StatCatalog.PercentMaxBelow;
+        }
+
+        // Свой стат, которого нет в справочнике: только по знаку «%» в строке.
+        return tail.Contains('%');
     }
 
     private static double ParseNumber(string text) =>

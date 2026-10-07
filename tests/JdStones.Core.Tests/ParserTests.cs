@@ -97,9 +97,35 @@ public class ParserTests
     [InlineData("Снижен. урона 12 0.12/0.886", true)]
     // Числовой стат остаётся числом.
     [InlineData("Здоровье 86.80 86.80/588.00", false)]
+    // Со скриншота: оба «%» прочитаны как «0» — тип берём из справочника.
+    [InlineData("Защита/крит.ур. 0.4400/0", true)]
+    [InlineData("Защита 2.66 6/39 S", false)]
+    [InlineData("Сопр. оглуш. 3.39", false)]
+    [InlineData("Крит. урон 1530", true)]
     public void DetectsPercentEvenWhenOcrLosesTheSign(string row, bool percent)
     {
         Assert.Equal(percent, Assert.Single(StatParser.Parse([row], Matcher)).IsPercent);
+    }
+
+    [Fact]
+    public void EveryCatalogStatHasKind()
+    {
+        Assert.All(StatCatalog.Predefined, s => Assert.True(StatCatalog.Kinds.ContainsKey(s), s));
+    }
+
+    [Fact]
+    public void ParsesRecognitionTestScreenshot()
+    {
+        // Ровно то, что OCR выдал на скриншоте «Проверка распознавания».
+        string[] rows =
+        [
+            "дух 70.40", "Здоровье 39.19 —19/588.юю", "Защита 2.66 6/39 S", "Атака 3.96 6/69:3",
+            "Защита/крит.ур. 0.4400/0", "сопр. оглуш. 3.39",
+        ];
+        var lines = StatParser.Parse(rows, Matcher);
+
+        Assert.Equal(6, lines.Count);
+        Assert.Equal(["Защита/крит.ур."], lines.Where(l => l.IsPercent).Select(l => l.Stat));
     }
 
     [Fact]
