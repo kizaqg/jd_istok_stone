@@ -18,6 +18,11 @@ public static partial class StatParser
     [GeneratedRegex(@"(\d+(?:[.,]\d+)?)\s*(%)?")]
     private static partial Regex NumberRegex();
 
+    // Токен английского OCR, который является числом целиком: «5684.00», «6.210%», «86.80/588.00».
+    // Слова вроде «3AOPOBbe» (так английский движок читает «Здоровье») числом не считаются.
+    [GeneratedRegex(@"^[(\[]?\d[\d.,:%/]*[)\]]?$")]
+    private static partial Regex NumberTokenRegex();
+
     // Максимум из колонки «Развитие»: «0.121%/0.886%» или «5.98/27.40».
     [GeneratedRegex(@"/\s*(\d+(?:[.,]\d+)?)")]
     private static partial Regex MaxRegex();
@@ -110,7 +115,7 @@ public static partial class StatParser
     /// </summary>
     public static IReadOnlyList<string> MergeRows(IEnumerable<OcrWord> nameWords, IEnumerable<OcrWord> numberWords)
     {
-        var numbers = numberWords.Where(w => w.Text.Any(char.IsDigit)).ToList();
+        var numbers = numberWords.Where(w => NumberTokenRegex().IsMatch(w.Text)).ToList();
         var result = new List<string>();
         foreach (var row in BuildRows(nameWords))
         {
@@ -124,9 +129,9 @@ public static partial class StatParser
                 result.Add(string.Join(" ", ordered.Select(w => w.Text)));
                 continue;
             }
-            // Название — русские слова левее первого числа (и без цифр).
+            // Название — русские слова левее первого числа (и не сами числа).
             var firstNumberX = inRow[0].X;
-            var name = ordered.Where(w => w.X + w.Width / 2 < firstNumberX && !w.Text.Any(char.IsDigit)).Select(w => w.Text);
+            var name = ordered.Where(w => w.X + w.Width / 2 < firstNumberX && !NumberTokenRegex().IsMatch(w.Text)).Select(w => w.Text);
             result.Add(string.Join(" ", name.Concat(inRow.Select(n => n.Text))));
         }
         return result;

@@ -130,6 +130,27 @@ public class ParserTests
     }
 
     [Fact]
+    public void EnglishMisreadOfNameIsNotTakenAsNumber()
+    {
+        // Со скриншота: английский движок прочитал «Здоровье» как «3AOPOBbe» (с цифрой «3»).
+        OcrWord[] ru =
+        [
+            new("Здоровье", 0, 10, 60, 12), new("5684.00", 140, 10, 50, 12),
+            new("Увел.", 0, 30, 35, 12), new("здоровья", 40, 30, 60, 12), new("6.210", 140, 30, 45, 12),
+        ];
+        OcrWord[] en =
+        [
+            new("3AOPOBbe", 0, 10, 60, 12), new("5684.00", 140, 10, 50, 12),
+            new("YBen.", 0, 30, 35, 12), new("3AOPOBb9", 40, 30, 60, 12), new("6.210%", 140, 30, 48, 12),
+        ];
+
+        var rows = StatParser.MergeRows(ru, en);
+
+        Assert.Equal(["Здоровье 5684.00", "Увел. здоровья 6.210%"], rows);
+        Assert.Equal(["Здоровье", "Увел. здоровья"], StatParser.Parse(rows, Matcher).Select(l => l.Stat));
+    }
+
+    [Fact]
     public void MergeKeepsRussianRowWhenEnglishFoundNoNumber()
     {
         OcrWord[] ru = [new("Дух", 0, 10, 30, 12), new("70.40", 100, 10, 40, 12)];
