@@ -17,6 +17,7 @@ internal sealed class MainForm : Form
 
     private static readonly string[] UnitTexts = ["любое", "в %", "числом"];
     private static readonly string[] OperatorTexts = ["≥", "≤", "="];
+    private static readonly string[] FilterTexts = ["серый с инверсией", "чёрно-белый (порог)"];
 
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly OcrService? _ocr = OcrService.TryCreate();
@@ -36,6 +37,7 @@ internal sealed class MainForm : Form
         Text = "Фоновый режим (игра может быть под другими окнами, мышь не трогается)", AutoSize = true, Anchor = AnchorStyles.Left,
     };
     private readonly CheckBox _overlayEnabled = new() { Text = "Панель поверх игры", AutoSize = true, Anchor = AnchorStyles.Left };
+    private readonly ComboBox _filterBox = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 180, Anchor = AnchorStyles.Left };
 
     private readonly Label _windowLabel = new() { AutoSize = true, Anchor = AnchorStyles.Left };
     private readonly Label _statsLabel = StatusLabel();
@@ -93,6 +95,7 @@ internal sealed class MainForm : Form
         Log(_ocr == null
             ? "ВНИМАНИЕ: нет русского OCR в Windows. Нажмите «Проверить распознавание» для инструкции."
             : "Готово. Настройте окно, области и фильтры, затем F5.");
+        if (_ocr is { HasDigitsEngine: false }) Log(OcrService.MissingDigitsHelp.Replace("\n", " "));
     }
 
     private static Label StatusLabel() => new() { AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = Color.DimGray };
@@ -151,6 +154,25 @@ internal sealed class MainForm : Form
         setup.SetColumnSpan(_backgroundMode, 2);
         setup.Controls.Add(MakeButton("Проверить фоновый клик", TestBackgroundClick), 2, 5);
         setup.Controls.Add(_overlayEnabled, 3, 5);
+
+        setup.Controls.Add(new Label { Text = "Обработка картинки для распознавания:", AutoSize = true, Anchor = AnchorStyles.Right }, 0, 6);
+        _filterBox.Items.AddRange(FilterTexts);
+        _filterBox.SelectedIndex = Math.Clamp(_settings.OcrFilter, 0, FilterTexts.Length - 1);
+        if (_ocr != null) _ocr.Filter = (OcrFilter)_filterBox.SelectedIndex;
+        _filterBox.SelectedIndexChanged += (_, _) =>
+        {
+            if (_ocr != null) _ocr.Filter = (OcrFilter)_filterBox.SelectedIndex;
+            SaveSettings();
+        };
+        NoWheel(_filterBox);
+        setup.Controls.Add(_filterBox, 1, 6);
+        var filterHint = new Label
+        {
+            AutoSize = true, Anchor = AnchorStyles.Left, ForeColor = Color.DimGray,
+            Text = "сравните варианты в «Проверить распознавание»",
+        };
+        setup.Controls.Add(filterHint, 2, 6);
+        setup.SetColumnSpan(filterHint, 2);
 
         var filtersHeader = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(8, 4, 8, 0) };
         filtersHeader.Controls.Add(new Label { Text = "Фильтры для поиска", AutoSize = true, Font = new Font(Font, FontStyle.Bold), Margin = new Padding(0, 6, 12, 0) });
@@ -458,16 +480,25 @@ internal sealed class MainForm : Form
         try
         {
             var shot = CaptureGame(window, region);
-            var rows = StatParser.GroupIntoRows(await _ocr.RecognizeAsync(shot));
             var conditions = _groups.SelectMany(g => g.Conditions).ToList();
             var matcher = new StatMatcher(StatCatalog.Predefined.Concat(conditions.Select(c => c.Stat)));
+            var rows = await _ocr.RecognizeRowsAsync(shot);
             var lines = StatParser.Parse(rows, matcher);
 
             var report = new StringBuilder();
             report.AppendLine($"Режим: {(_backgroundMode.Checked ? "фоновый" : "обычный")}. Картинка снята {_captureSource}.");
+            report.AppendLine(_ocr.HasDigitsEngine
+                ? "Числа читает английский движок, названия — русский."
+                : "Английского распознавания нет — числа читает русский движок (менее точно с «%»).");
             report.AppendLine();
-            report.AppendLine("Распознанный текст:");
+            report.AppendLine($"Распознанный текст (обработка: {FilterTexts[(int)_ocr.Filter]} — выбрана):");
             foreach (var row in rows) report.AppendLine("  " + row);
+
+            // Для сравнения — другая обработка картинки. Выберите в настройках ту, что читает точнее.
+            var other = _ocr.Filter == OcrFilter.GrayInvert ? OcrFilter.BlackWhite : OcrFilter.GrayInvert;
+            var otherRows = await _ocr.RecognizeRowsAsync(shot, OcrService.DefaultScale, other);
+            report.AppendLine().AppendLine($"Для сравнения, обработка «{FilterTexts[(int)other]}»:");
+            foreach (var row in otherRows) report.AppendLine("  " + row);
             report.AppendLine().AppendLine($"Найдено статов: {lines.Count}");
             foreach (var line in lines) report.AppendLine($"  {line.Stat,-18} {line.Value:0.###}{(line.IsPercent ? "%" : "")}   ({(line.IsPercent ? "в %" : "числом")})");
             report.AppendLine().AppendLine($"Фильтры сейчас: {(ConditionEvaluator.Matches(_groups, lines) ? "ПОДХОДИТ" : "не подходит")}");
@@ -781,7 +812,7 @@ internal sealed class MainForm : Form
             async Task<string> ReadAsync()
             {
                 using var shot = wgc.Capture(region);
-                var lines = StatParser.Parse(StatParser.GroupIntoRows(await _ocr.RecognizeAsync(shot)), matcher);
+                var lines = StatParser.Parse(await _ocr.RecognizeRowsAsync(shot), matcher);
                 return string.Join(" | ", lines);
             }
 
@@ -938,6 +969,7 @@ internal sealed class MainForm : Form
         _settings.MaxAttempts = (int)_maxAttempts.Value;
         _settings.Groups = TemplateSerializer.ToDto(_groups);
         _settings.BackgroundMode = _backgroundMode.Checked;
+        _settings.OcrFilter = _filterBox.SelectedIndex;
         _settings.OverlayEnabled = _overlayEnabled.Checked;
         _settings.Save();
     }

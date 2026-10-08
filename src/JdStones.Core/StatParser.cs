@@ -23,7 +23,10 @@ public static partial class StatParser
     private static partial Regex MaxRegex();
 
     /// <summary>Собирает слова OCR в строки по вертикальной координате.</summary>
-    public static IReadOnlyList<string> GroupIntoRows(IEnumerable<OcrWord> words)
+    public static IReadOnlyList<string> GroupIntoRows(IEnumerable<OcrWord> words) =>
+        BuildRows(words).Select(r => string.Join(" ", r.Words.OrderBy(w => w.X).Select(w => w.Text))).ToList();
+
+    private static List<(double CenterY, double Height, List<OcrWord> Words)> BuildRows(IEnumerable<OcrWord> words)
     {
         var rows = new List<(double CenterY, double Height, List<OcrWord> Words)>();
         foreach (var w in words.OrderBy(w => w.Y + w.Height / 2))
@@ -40,7 +43,7 @@ public static partial class StatParser
             }
             rows.Add((cy, w.Height, [w]));
         }
-        return rows.Select(r => string.Join(" ", r.Words.OrderBy(w => w.X).Select(w => w.Text))).ToList();
+        return rows;
     }
 
     /// <summary>
@@ -57,13 +60,14 @@ public static partial class StatParser
             if (!m.Success) continue;
             var stat = matcher.Match(row[..m.Index]);
             if (stat == null) continue;
-            var value = ParseNumber(m.Groups[1].Value);
-            result.Add(new StatLine(stat, value, IsPercent(stat, row[m.Index..], value), row));
+            var number = m.Groups[1].Value;
+            var value = ParseNumber(number);
+            result.Add(new StatLine(stat, value, IsPercent(stat, row[m.Index..], number, value), row));
         }
         return result;
     }
 
-    private static bool IsPercent(string stat, string tail, double value)
+    private static bool IsPercent(string stat, string tail, string number, double value)
     {
         if (StatCatalog.Kinds.TryGetValue(stat, out var kind))
         {
@@ -75,15 +79,57 @@ public static partial class StatParser
                     return false;
             }
 
-            // «Снижен. урона»: в процентах всегда меньше 1, числом — от 1 до ~27.
-            // Значение больше 30 — испорченный процент («0.054%» → «540»).
-            if (value < StatCatalog.PercentBelow || value > StatCatalog.GarbledPercentAbove) return true;
+            // «Снижен. урона»: процент — меньше 1 или 3+ знака после точки; иначе число.
+            if (HasPercentSign(tail, number)) return true;
+            if (value < StatCatalog.PercentBelow || Decimals(number) >= StatCatalog.PercentDecimals) return true;
             var max = MaxRegex().Match(tail);
             return max.Success && ParseNumber(max.Groups[1].Value) < StatCatalog.PercentMaxBelow;
         }
 
         // Свой стат, которого нет в справочнике: только по знаку «%» в строке.
         return tail.Contains('%');
+    }
+
+    // «%» сразу после значения (если OCR его не потерял).
+    private static bool HasPercentSign(string tail, string number)
+    {
+        var rest = tail[(tail.IndexOf(number, StringComparison.Ordinal) + number.Length)..].TrimStart();
+        return rest.StartsWith('%');
+    }
+
+    private static int Decimals(string number)
+    {
+        var dot = number.IndexOfAny(['.', ',']);
+        return dot < 0 ? 0 : number.Length - dot - 1;
+    }
+
+    /// <summary>
+    /// Склеивает строки из двух чтений одной картинки: названия — из русского OCR, числа — из
+    /// английского (он гораздо надёжнее читает цифры, точки и «%»). Строки сопоставляются по высоте.
+    /// Если английский ничего не нашёл в строке — она остаётся как прочитал русский.
+    /// </summary>
+    public static IReadOnlyList<string> MergeRows(IEnumerable<OcrWord> nameWords, IEnumerable<OcrWord> numberWords)
+    {
+        var numbers = numberWords.Where(w => w.Text.Any(char.IsDigit)).ToList();
+        var result = new List<string>();
+        foreach (var row in BuildRows(nameWords))
+        {
+            var ordered = row.Words.OrderBy(w => w.X).ToList();
+            var inRow = numbers
+                .Where(n => Math.Abs(n.Y + n.Height / 2 - row.CenterY) <= Math.Max(row.Height, n.Height) * 0.6)
+                .OrderBy(n => n.X)
+                .ToList();
+            if (inRow.Count == 0)
+            {
+                result.Add(string.Join(" ", ordered.Select(w => w.Text)));
+                continue;
+            }
+            // Название — русские слова левее первого числа (и без цифр).
+            var firstNumberX = inRow[0].X;
+            var name = ordered.Where(w => w.X + w.Width / 2 < firstNumberX && !w.Text.Any(char.IsDigit)).Select(w => w.Text);
+            result.Add(string.Join(" ", name.Concat(inRow.Select(n => n.Text))));
+        }
+        return result;
     }
 
     private static double ParseNumber(string text) =>

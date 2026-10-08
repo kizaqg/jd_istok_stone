@@ -87,14 +87,15 @@ public class ParserTests
     // «%» потерян у значения, но есть в колонке «Развитие».
     [InlineData("Снижен. урона 0.121 0.121%/0.886%", true)]
     [InlineData("Сопр. Феору 1560 0.156%/0.630%", true)]
-    // «%» прочитан как «0», а «0.» потерян: 0.054% → 540.
-    [InlineData("Снижен. урона 540", true)]
     // Без «%» и без «Развития»: меньше 1 — процент, 1..30 — число.
     [InlineData("Снижен. урона 0.089", true)]
     [InlineData("Снижен. урона 5.98", false)]
     [InlineData("Снижен. урона 2.47 2.47/27.40", false)]
     // Максимум «Развития» выдаёт процент, даже если значение распозналось числом.
     [InlineData("Снижен. урона 12 0.12/0.886", true)]
+    // Со скриншота: 0.240% → «0.24070», а 50.70 — это число, не процент.
+    [InlineData("Снижен. урона 0.24070", true)]
+    [InlineData("Снижен. урона 50.70", false)]
     // Числовой стат остаётся числом.
     [InlineData("Здоровье 86.80 86.80/588.00", false)]
     // Со скриншота: оба «%» прочитаны как «0» — тип берём из справочника.
@@ -105,6 +106,34 @@ public class ParserTests
     public void DetectsPercentEvenWhenOcrLosesTheSign(string row, bool percent)
     {
         Assert.Equal(percent, Assert.Single(StatParser.Parse([row], Matcher)).IsPercent);
+    }
+
+    [Fact]
+    public void MergesNamesFromRussianWithNumbersFromEnglish()
+    {
+        OcrWord[] ru =
+        [
+            new("Снижен.", 0, 100, 50, 12), new("урона", 55, 100, 40, 12), new("0.24070", 130, 101, 50, 12),
+            new("Снижен.", 0, 120, 50, 12), new("урона", 55, 120, 40, 12), new("50.70", 130, 121, 40, 12),
+        ];
+        OcrWord[] en =
+        [
+            new("CHu)KeH.", 0, 100, 50, 12), new("0.240%", 130, 101, 48, 12),
+            new("CHu)KeH.", 0, 120, 50, 12), new("50.70", 130, 121, 40, 12),
+        ];
+
+        var rows = StatParser.MergeRows(ru, en);
+
+        Assert.Equal(["Снижен. урона 0.240%", "Снижен. урона 50.70"], rows);
+        var lines = StatParser.Parse(rows, Matcher);
+        Assert.Equal([true, false], lines.Select(l => l.IsPercent));
+    }
+
+    [Fact]
+    public void MergeKeepsRussianRowWhenEnglishFoundNoNumber()
+    {
+        OcrWord[] ru = [new("Дух", 0, 10, 30, 12), new("70.40", 100, 10, 40, 12)];
+        Assert.Equal(["Дух 70.40"], StatParser.MergeRows(ru, []));
     }
 
     [Fact]

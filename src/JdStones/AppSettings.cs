@@ -20,6 +20,8 @@ internal sealed class AppSettings
 
     /// <summary>Фоновый режим: съёмка окна под другими окнами и клики без движения мыши.</summary>
     public bool BackgroundMode { get; set; }
+    /// <summary>Обработка картинки перед распознаванием: 0 — серый с инверсией, 1 — чёрно-белый.</summary>
+    public int OcrFilter { get; set; }
     public bool OverlayEnabled { get; set; } = true;
     public int[]? OverlayOffset { get; set; }
     /// <summary>Каким способом в фоновом режиме удалось нажать «Да» в окне предупреждения.</summary>

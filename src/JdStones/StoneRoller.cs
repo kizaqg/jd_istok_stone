@@ -279,16 +279,15 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
 
     // Похожие статы («Защита/крит.ат.» и «Защита/крит.ур.») отличаются парой мелких букв,
     // и OCR иногда путает «а/у», «т/р». Находку перепроверяем ещё двумя независимыми
-    // чтениями (другое увеличение) и принимаем, если подходят минимум 2 из 3.
-    private static readonly int[] VerifyScales = [4, 2];
-
+    // чтениями (другое увеличение и другая обработка картинки) и принимаем, если подходят 2 из 3.
     private async Task<bool> ConfirmMatchAsync(RollerConfig cfg, StatMatcher matcher)
     {
+        var other = ocr.Filter == OcrFilter.GrayInvert ? OcrFilter.BlackWhite : OcrFilter.GrayInvert;
         var votes = 1;
         var rejected = new List<string>();
-        foreach (var scale in VerifyScales)
+        foreach (var (scale, filter) in new (int, OcrFilter?)[] { (4, null), (OcrService.DefaultScale, other) })
         {
-            var again = await ReadStatsAsync(cfg, matcher, scale);
+            var again = await ReadStatsAsync(cfg, matcher, scale, filter);
             if (ConditionEvaluator.MatchingGroupIndex(cfg.Groups, again) >= 0) votes++;
             else rejected.Add(string.Join(" | ", again));
         }
@@ -299,9 +298,9 @@ internal sealed class StoneRoller(OcrService ocr, Action<string> log, Action<int
     }
 
     private async Task<IReadOnlyList<StatLine>> ReadStatsAsync(RollerConfig cfg, StatMatcher matcher,
-        int scale = OcrService.DefaultScale)
+        int scale = OcrService.DefaultScale, OcrFilter? filter = null)
     {
         using var shot = cfg.Capture(cfg.StatsRegion);
-        return StatParser.Parse(StatParser.GroupIntoRows(await ocr.RecognizeAsync(shot, scale)), matcher);
+        return StatParser.Parse(await ocr.RecognizeRowsAsync(shot, scale, filter), matcher);
     }
 }
