@@ -58,6 +58,8 @@ public class ParserTests
     [InlineData("Снижен урона 0.121%", "Снижен. урона", true)]   // потерянная точка
     [InlineData("Сннжен. урона 5.98", "Снижен. урона", false)]   // одна ошибка в букве
     [InlineData("Дух 12", "Дух", false)]
+    [InlineData("Сила воли 24.50", "Сила воли", false)]
+    [InlineData("Воля 33.6", "Воля", false)]
     [InlineData("Увел. духа 0.5%", "Увел. духа", true)]
     public void ToleratesOcrNoise(string row, string stat, bool percent)
     {
